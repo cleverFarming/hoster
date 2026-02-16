@@ -1,9 +1,9 @@
-"""AI智慧农业 —— Streamlit 对话界面（流式思考）"""
+"""AI智慧农业 —— Streamlit 对话界面（流式思考 + 工具调用提示）"""
 
-import os, json
+import os, json, time
 import streamlit as st
 from openai import OpenAI
-from tools import TOOL_DEFS, call_tool, init_db
+from tools import TOOL_DEFS, call_tool, init_db, TOOL_DISPLAY_NAMES
 
 # ═══════════════════ 初始化 ═══════════════════
 
@@ -20,6 +20,9 @@ BASE_URL = os.environ.get("API_BASE", "https://api.deepseek.com")
 MODEL    = os.environ.get("MODEL", "deepseek-chat")   # DeepSeek-V3
 
 client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
+
+# 工具中文名映射（用于界面提示）
+
 
 SYSTEM = """你是「农智」—— AI 智慧农业助手。
 你管理的农场分为 东北、西北、东南、西南 四个区域，每个区域配有温度、湿度、CO₂、光照传感器。
@@ -73,8 +76,9 @@ for m in st.session_state.msgs:
 
     elif role == "tool":
         name = st.session_state.tool_names.get(m.get("tool_call_id"), "工具")
+        display = TOOL_DISPLAY_NAMES.get(name, f"🔧 {name}")
         with st.chat_message("assistant", avatar="🔧"):
-            with st.expander(f"📊 {name}", expanded=False):
+            with st.expander(f"{display} — 返回结果", expanded=False):
                 try:
                     st.json(json.loads(content))
                 except Exception:
@@ -87,16 +91,17 @@ if len(st.session_state.msgs) == 1:
 # ═══════════════════ 用户输入 & 多轮工具调用（流式） ═══════════════════
 
 if prompt := st.chat_input("请输入您的问题…"):
-    # 添加用户消息
+    # 显示并记录用户消息
+    st.chat_message("user").write(prompt)
     st.session_state.msgs.append({"role": "user", "content": prompt})
 
     # 最多进行 10 轮工具调用
-    for _ in range(10):
-        # 创建占位符用于流式显示本轮助手回复
+    for round_idx in range(10):
+
+        # ── 流式请求 ──
         with st.chat_message("assistant"):
             placeholder = st.empty()
 
-        # 发起流式请求
         try:
             stream = client.chat.completions.create(
                 model=MODEL,
@@ -108,19 +113,26 @@ if prompt := st.chat_input("请输入您的问题…"):
             st.error(f"API 调用失败：{e}")
             st.stop()
 
-        # 收集流式数据
+        # ── 逐 chunk 收集 ──
         full_content = ""
         tool_calls_dict = {}  # index -> 累积的 tool_call 信息
 
         for chunk in stream:
-            delta = chunk.choices[0].delta
+            if not chunk.choices:
+                continue
 
-            # 处理文本内容
+            choice = chunk.choices[0]
+
+            delta = choice.delta
+            if delta is None:
+                continue
+
+            # 流式文本
             if delta.content:
                 full_content += delta.content
-                placeholder.markdown(full_content + "▌")  # 显示光标
+                placeholder.markdown(full_content + "▌")
 
-            # 处理工具调用（可能分片）
+            # 工具调用分片
             if delta.tool_calls:
                 for tc_chunk in delta.tool_calls:
                     idx = tc_chunk.index
@@ -130,7 +142,6 @@ if prompt := st.chat_input("请输入您的问题…"):
                             "name": None,
                             "arguments": ""
                         }
-                    # 累积信息
                     if tc_chunk.id:
                         tool_calls_dict[idx]["id"] = tc_chunk.id
                     if tc_chunk.function and tc_chunk.function.name:
@@ -138,21 +149,18 @@ if prompt := st.chat_input("请输入您的问题…"):
                     if tc_chunk.function and tc_chunk.function.arguments:
                         tool_calls_dict[idx]["arguments"] += tc_chunk.function.arguments
 
-        # 流结束，更新占位符为最终内容（去掉光标）
+        # ── 流结束：更新占位符 ──
         if full_content:
             placeholder.markdown(full_content)
         else:
-            # 如果没有任何文本（直接调用工具），可显示一个简短提示
-            placeholder.markdown("*(正在调用工具...)*")
+            placeholder.empty()  # 清除占位，下面会显示工具提示
 
-        # 构建完整的 assistant 消息
-        assistant_msg = {"role": "assistant", "content": full_content or None}
+        # ── 构建 assistant 消息 ──
+        tool_calls_list = []
         if tool_calls_dict:
-            # 按索引排序，组装成标准格式
-            tool_calls = []
             for idx in sorted(tool_calls_dict.keys()):
                 tc = tool_calls_dict[idx]
-                tool_calls.append({
+                tool_calls_list.append({
                     "id": tc["id"],
                     "type": "function",
                     "function": {
@@ -160,32 +168,63 @@ if prompt := st.chat_input("请输入您的问题…"):
                         "arguments": tc["arguments"]
                     }
                 })
-            assistant_msg["tool_calls"] = tool_calls
 
-        # 将本轮助手消息加入历史
+        assistant_msg = {"role": "assistant", "content": full_content or None}
+        if tool_calls_list:
+            assistant_msg["tool_calls"] = tool_calls_list
         st.session_state.msgs.append(assistant_msg)
 
-        # 如果没有工具调用，结束本轮对话
-        if not tool_calls_dict:
+        # ── 无工具调用 → 结束 ──
+        if not tool_calls_list:
             break
 
-        # 执行所有工具调用
-        for tc in tool_calls:
+        # ── 执行工具调用（带状态提示） ──
+        for tc in tool_calls_list:
             fn_name = tc["function"]["name"]
             fn_args = json.loads(tc["function"]["arguments"])
-            result = call_tool(fn_name, fn_args)
+            display_name = TOOL_DISPLAY_NAMES.get(fn_name, f"🔧 {fn_name}")
 
-            # 记录工具名（用于渲染时显示）
+            # 显示「正在调用」状态
+            with st.chat_message("assistant", avatar="🔧"):
+                status_container = st.container()
+
+                # 解析参数用于提示
+                args_hint = "、".join(f"{k}={v}" for k, v in fn_args.items())
+                with status_container.status(
+                    f"⏳ 正在调用 {display_name}（{args_hint}）…",
+                    expanded=False,
+                    state="running",
+                ) as status_widget:
+                    st.write(f"**函数**: `{fn_name}`")
+                    st.write(f"**参数**:")
+                    st.json(fn_args)
+
+                    # 调用工具
+                    result = call_tool(fn_name, fn_args)
+
+                    # 更新状态为完成
+                    status_widget.update(
+                        label=f"✅ {display_name} — 调用完成",
+                        state="complete",
+                        expanded=False,
+                    )
+                    st.write("**返回结果**:")
+                    try:
+                        st.json(json.loads(result))
+                    except Exception:
+                        st.code(result)
+
+            # 记录映射
             st.session_state.tool_names[tc["id"]] = fn_name
 
-            # 将工具结果加入历史
+            # 加入历史
             st.session_state.msgs.append({
                 "role": "tool",
                 "tool_call_id": tc["id"],
                 "content": result,
             })
 
-        # 继续下一轮（让模型根据工具结果继续思考）
+        # 继续下一轮（模型根据工具结果继续生成）
 
-    # 所有轮次结束后刷新页面，显示完整对话（包括工具结果）
+    # 所有轮次结束后刷新页面以保持状态一致
     st.rerun()

@@ -7,6 +7,17 @@ import sqlite3, json, math, random
 from datetime import datetime, timedelta
 from typing import Union, Optional
 
+# ═══════════════════ 工具定义 ═══════════════════
+
+TOOL_DISPLAY_NAMES = {
+    "get_sensor_data":    "📡 查询传感器数据",
+    "get_zone_overview":  "📋 获取区域概览",
+    "get_sensor_history": "📈 查询历史趋势",
+    "water_zone":         "💧 执行浇水操作",
+    "read_log":           "📖 读取操作日志",
+    "write_log":          "📝 写入操作日志",
+}
+
 # ═══════════════════ 常量 ═══════════════════
 
 DB = "farm.db"
