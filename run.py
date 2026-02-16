@@ -3,7 +3,7 @@
 import os, json, time
 import streamlit as st
 from openai import OpenAI
-from tools import TOOL_DEFS, call_tool, init_db, TOOL_DISPLAY_NAMES
+from tools import TOOL_DEFS, call_tool, init_db, TOOL_DISPLAY_NAMES, start_sensor_collector
 
 # ═══════════════════ 初始化 ═══════════════════
 
@@ -12,7 +12,7 @@ try:
     load_dotenv()
 except ImportError:
     pass
-
+start_sensor_collector(10)
 init_db()
 
 API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")

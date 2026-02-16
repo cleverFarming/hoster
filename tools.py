@@ -3,7 +3,7 @@
 新增工具只需：① 写函数  ② 加 TOOL_DEFS  ③ 加 _FN
 """
 
-import sqlite3, json, math, random
+import sqlite3, json, math, random, threading, time
 from datetime import datetime, timedelta
 from typing import Union, Optional
 
@@ -62,6 +62,90 @@ def _sim(zone: str, s: str, t: Optional[datetime] = None) -> float:
     raw = max(0, 50000 * math.sin((h - 6) * math.pi / 12)) if 6 <= h <= 18 else 0
     return round(max(0, raw + z * 1000 + random.gauss(0, 1500)))
 
+# ═══════════════════ 后台数据采集线程 ═══════════════════
+
+_collector_started = False
+_collector_lock = threading.Lock()
+_collector_stop_event = threading.Event()
+
+
+def _collector_loop(interval: float):
+    """后台线程主循环：每隔 interval 秒向数据库写入所有区域所有传感器的模拟数据"""
+    while not _collector_stop_event.is_set():
+        now = datetime.now()
+        ts = now.isoformat()
+        rows = []
+        for zone in ZONES:
+            for sensor in SENSORS:
+                val = _sim(zone, sensor, now)
+                rows.append((ts, zone, sensor, val))
+
+        try:
+            with sqlite3.connect(DB) as c:
+                c.executemany(
+                    "INSERT INTO sensor_data VALUES(NULL,?,?,?,?)", rows
+                )
+        except Exception as e:
+            # 静默处理，避免后台线程崩溃
+            print(f"[数据采集] 写入失败: {e}")
+
+        # 可中断的等待，比 time.sleep 更优雅
+        _collector_stop_event.wait(timeout=interval)
+
+
+def start_sensor_collector(interval: float = 30.0):
+    """
+    启动后台传感器数据采集线程。
+
+    参数:
+        interval: 采集间隔（秒），默认 30 秒。
+                  每次采集会为 4 个区域 × 4 个传感器 = 16 条记录写入数据库。
+
+    说明:
+        - 多次调用是安全的，只会启动一个线程
+        - 线程设为 daemon，主进程退出时自动结束
+        - 也可调用 stop_sensor_collector() 手动停止
+    """
+    global _collector_started
+
+    with _collector_lock:
+        if _collector_started:
+            print("[数据采集] 采集线程已在运行，跳过重复启动")
+            return
+
+        _collector_stop_event.clear()
+
+        t = threading.Thread(
+            target=_collector_loop,
+            args=(interval,),
+            name="SensorCollector",
+            daemon=True,  # 主进程退出时自动终止
+        )
+        t.start()
+        _collector_started = True
+        print(f"[数据采集] 后台线程已启动，采集间隔 {interval} 秒，"
+              f"每次写入 {len(ZONES) * len(SENSORS)} 条记录")
+
+
+def stop_sensor_collector():
+    """停止后台传感器数据采集线程"""
+    global _collector_started
+
+    with _collector_lock:
+        if not _collector_started:
+            print("[数据采集] 采集线程未运行")
+            return
+
+        _collector_stop_event.set()
+        _collector_started = False
+        print("[数据采集] 已发送停止信号")
+
+
+def is_collector_running() -> bool:
+    """检查采集线程是否正在运行"""
+    return _collector_started
+
+
 # ═══════════════════ 工具实现 ═══════════════════
 
 def get_current_sensor_data(zone: str, sensor_type: str) -> dict:
@@ -77,19 +161,45 @@ def get_current_sensor_data(zone: str, sensor_type: str) -> dict:
 
 
 def get_historical_sensor_data(zone: str, sensor_type: str, hours: float) -> dict:
-    """生成过去 N 小时的模拟历史数据"""
+    """
+    获取过去 N 小时的历史数据。
+    优先从数据库读取真实采集数据，若数据不足则用模拟数据补充。
+    """
     now = datetime.now()
-    interval = 30 if hours <= 24 else (60 if hours <= 168 else 180)
-    data = []
-    for i in range(int(hours * 60 / interval), 0, -1):
-        ts = now - timedelta(minutes=i * interval)
-        data.append({"time": ts.strftime("%m-%d %H:%M"),
-                      "value": _sim(zone, sensor_type, ts)})
+    start = now - timedelta(hours=hours)
+
+    # 先尝试从数据库读取
+    with sqlite3.connect(DB) as c:
+        rows = c.execute(
+            "SELECT ts, val FROM sensor_data "
+            "WHERE zone=? AND type=? AND ts>=? ORDER BY ts",
+            (zone, sensor_type, start.isoformat())
+        ).fetchall()
+
+    if len(rows) >= 5:
+        # 数据库有足够数据，直接使用
+        data = []
+        for r in rows:
+            try:
+                t = datetime.fromisoformat(r[0])
+                data.append({"time": t.strftime("%m-%d %H:%M"), "value": r[1]})
+            except Exception:
+                continue
+    else:
+        # 数据不足，用模拟数据
+        interval = 30 if hours <= 24 else (60 if hours <= 168 else 180)
+        data = []
+        for i in range(int(hours * 60 / interval), 0, -1):
+            ts = now - timedelta(minutes=i * interval)
+            data.append({"time": ts.strftime("%m-%d %H:%M"),
+                          "value": _sim(zone, sensor_type, ts)})
+
     vals = [d["value"] for d in data]
     return {"zone": zone, "sensor": NAMES[sensor_type], "unit": UNITS[sensor_type],
             "period": f"过去{hours}小时", "count": len(data),
             "min": min(vals), "max": max(vals),
             "avg": round(sum(vals) / len(vals), 1),
+            "data_source": "数据库" if len(rows) >= 5 else "模拟",
             "data": data}
 
 
@@ -145,62 +255,42 @@ def read_logs(limit: int = 10, operation_type: Optional[str] = None) -> dict:
                       "detail": r[2], "operator": r[3]} for r in rows]}
 
 
-# ═══════════════════ ★ 新增：获取当前时间 ═══════════════════
-
 def get_current_time(timezone: str = "Asia/Shanghai") -> dict:
-    """获取当前日期和时间，包含星期、农历日期提示、日出日落估算等农业相关时间信息"""
-    from datetime import timezone as tz_module
-
+    """获取当前日期和时间，包含星期、季节、农事建议等"""
     now = datetime.now()
 
-    # 星期映射
     weekday_names = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
     weekday = weekday_names[now.weekday()]
 
-    # 时辰判断（方便农事参考）
     hour = now.hour
     if 5 <= hour < 7:
-        period = "清晨"
-        farm_hint = "适合巡田、查看露水情况"
+        period, farm_hint = "清晨", "适合巡田、查看露水情况"
     elif 7 <= hour < 9:
-        period = "早晨"
-        farm_hint = "适合施肥、喷药（风小、蒸发少）"
+        period, farm_hint = "早晨", "适合施肥、喷药（风小、蒸发少）"
     elif 9 <= hour < 11:
-        period = "上午"
-        farm_hint = "光照渐强，注意观察作物状态"
+        period, farm_hint = "上午", "光照渐强，注意观察作物状态"
     elif 11 <= hour < 13:
-        period = "中午"
-        farm_hint = "高温时段，避免浇水和喷药"
+        period, farm_hint = "中午", "高温时段，避免浇水和喷药"
     elif 13 <= hour < 15:
-        period = "下午早段"
-        farm_hint = "温度最高，注意遮阳和通风"
+        period, farm_hint = "下午早段", "温度最高，注意遮阳和通风"
     elif 15 <= hour < 17:
-        period = "下午"
-        farm_hint = "温度回落，可恢复田间作业"
+        period, farm_hint = "下午", "温度回落，可恢复田间作业"
     elif 17 <= hour < 19:
-        period = "傍晚"
-        farm_hint = "适合浇水（蒸发少、夜间吸收好）"
+        period, farm_hint = "傍晚", "适合浇水（蒸发少、夜间吸收好）"
     elif 19 <= hour < 21:
-        period = "晚间"
-        farm_hint = "检查灌溉设备和夜间防护"
+        period, farm_hint = "晚间", "检查灌溉设备和夜间防护"
     else:
-        period = "夜间"
-        farm_hint = "作物休息期，注意低温防护"
+        period, farm_hint = "夜间", "作物休息期，注意低温防护"
 
-    # 季节判断（用于农事建议）
     month = now.month
     if month in [3, 4, 5]:
-        season = "春季"
-        season_hint = "春耕播种期，注意倒春寒"
+        season, season_hint = "春季", "春耕播种期，注意倒春寒"
     elif month in [6, 7, 8]:
-        season = "夏季"
-        season_hint = "生长旺季，注意防暑、防涝、病虫害"
+        season, season_hint = "夏季", "生长旺季，注意防暑、防涝、病虫害"
     elif month in [9, 10, 11]:
-        season = "秋季"
-        season_hint = "收获季节，注意适时采收"
+        season, season_hint = "秋季", "收获季节，注意适时采收"
     else:
-        season = "冬季"
-        season_hint = "休耕/大棚管理期，注意防冻保温"
+        season, season_hint = "冬季", "休耕/大棚管理期，注意防冻保温"
 
     return {
         "date": now.strftime("%Y年%m月%d日"),
@@ -263,7 +353,6 @@ TOOL_DEFS = [
        {"limit":          {"type": "integer", "description": "返回条数，默认 10"},
         "operation_type": {"type": "string",  "description": "按操作类型筛选（可选）"}}),
 
-    # ★ 新增：获取当前时间
     _t("get_current_time",
        "获取当前日期、时间、星期、季节，以及对应的农事建议提示。当用户询问现在几点、今天几号、什么季节等时间相关问题时使用。",
        {"timezone": {"type": "string",
@@ -276,7 +365,7 @@ TOOL_DEFS = [
 _FN = {f.__name__: f for f in [
     get_current_sensor_data, get_historical_sensor_data,
     get_zone_overview, water_zone, write_log, read_logs,
-    get_current_time,   # ★ 新增
+    get_current_time,
 ]}
 
 def call_tool(name: str, args: dict) -> str:
