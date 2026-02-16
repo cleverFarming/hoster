@@ -21,6 +21,9 @@ MODEL    = os.environ.get("MODEL", "deepseek-chat")
 
 client = OpenAI(api_key=API_KEY, base_url=BASE_URL)
 
+# 工具中文名映射（用于界面提示）
+
+
 SYSTEM = """你是「农智」—— AI 智慧农业助手。
 你管理的农场分为 东北、西北、东南、西南 四个区域，每个区域配有温度、湿度、CO₂、光照传感器。
 
