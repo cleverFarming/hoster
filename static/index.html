@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🌾 AI 智慧农业助手</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            farm: {
+              50:  "#f0fdf4", 100: "#dcfce7", 200: "#bbf7d0",
+              400: "#4ade80", 500: "#22c55e", 600: "#16a34a",
+              700: "#15803d", 800: "#166534", 900: "#14532d",
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; }
+    ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
+
+    .md-content h1,.md-content h2,.md-content h3 { font-weight:700; margin:.5em 0 .25em; }
+    .md-content h1 { font-size:1.25rem; }
+    .md-content h2 { font-size:1.1rem; }
+    .md-content h3 { font-size:1rem; }
+    .md-content p  { margin:.4em 0; line-height:1.7; }
+    .md-content ul,.md-content ol { padding-left:1.5em; margin:.4em 0; }
+    .md-content li { margin:.2em 0; }
+    .md-content code { background:#f1f5f9; padding:.1em .4em; border-radius:.25em; font-size:.85em; }
+    .md-content pre code { background:none; padding:0; font-size:.82em; }
+    .md-content pre { background:#1e293b; color:#e2e8f0; padding:.75em 1em; border-radius:.5em; overflow-x:auto; margin:.5em 0; }
+    .md-content table { border-collapse:collapse; width:100%; margin:.5em 0; }
+    .md-content th,.md-content td { border:1px solid #cbd5e1; padding:.3em .6em; text-align:left; }
+    .md-content th { background:#f0fdf4; }
+    .md-content blockquote { border-left:3px solid #4ade80; padding-left:.75em; color:#475569; margin:.4em 0; }
+
+    .cursor::after { content:"▌"; animation:blink .7s step-start infinite; }
+    @keyframes blink { 50% { opacity:0; } }
+
+    .json-view { font-size:.78rem; }
+
+    .msg-enter { animation:fadeSlideIn .25s ease; }
+    @keyframes fadeSlideIn {
+      from { opacity:0; transform:translateY(8px); }
+      to   { opacity:1; transform:translateY(0); }
+    }
+  </style>
+</head>
+
+<body class="h-full bg-gradient-to-br from-farm-50 to-emerald-50 flex flex-col">
+<div id="app" class="h-screen flex flex-col overflow-hidden">
+
+  <!-- 顶栏 -->
+  <header class="flex-none bg-white/90 backdrop-blur border-b border-farm-200 shadow-sm">
+    <div class="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-2xl">🌾</span>
+        <div>
+          <h1 class="text-base font-bold text-farm-800 leading-none">AI 智慧农业助手</h1>
+          <p class="text-xs text-farm-600 leading-none mt-0.5">农智 · 智慧农场管理平台</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1.5 text-xs">
+          <span class="w-2 h-2 rounded-full transition-colors"
+            :class="isConnected ? 'bg-farm-500 animate-pulse' : 'bg-slate-300'"></span>
+          <span class="text-slate-500">{{ isConnected ? '已连接' : '未连接' }}</span>
+        </div>
+        <button @click="clearSession" :disabled="isStreaming"
+          class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-600
+                 bg-slate-100 hover:bg-slate-200 rounded-lg
+                 disabled:opacity-40 disabled:cursor-not-allowed transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0
+                 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0
+                 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+          清空对话
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 主体 -->
+  <div class="flex-1 flex overflow-hidden max-w-5xl mx-auto w-full">
+
+    <!-- 侧栏 -->
+    <aside class="hidden md:flex flex-col w-52 flex-none border-r border-farm-100 bg-white/60 py-4 px-3 gap-4">
+      <div>
+        <p class="text-xs font-semibold text-farm-700 uppercase tracking-wide mb-2">📍 农场区域</p>
+        <div class="flex flex-wrap gap-1.5">
+          <span v-for="z in zones" :key="z"
+            class="px-2 py-1 bg-farm-100 text-farm-700 text-xs rounded-md font-medium">
+            {{ z }}
+          </span>
+        </div>
+      </div>
+      <div>
+        <p class="text-xs font-semibold text-farm-700 uppercase tracking-wide mb-2">📡 传感器</p>
+        <div class="flex flex-col gap-1">
+          <span v-for="s in sensors" :key="s" class="flex items-center gap-1.5 text-xs text-slate-600">
+            <span class="w-1.5 h-1.5 rounded-full bg-farm-400"></span>{{ s }}
+          </span>
+        </div>
+      </div>
+      <div>
+        <p class="text-xs font-semibold text-farm-700 uppercase tracking-wide mb-2">⚡ 快速指令</p>
+        <div class="flex flex-col gap-1.5">
+          <button v-for="q in quickPrompts" :key="q.text"
+            @click="sendQuick(q.text)" :disabled="isStreaming"
+            class="text-left text-xs text-slate-600 hover:text-farm-700 hover:bg-farm-50
+                   px-2 py-1.5 rounded-md transition
+                   disabled:opacity-40 disabled:cursor-not-allowed leading-snug">
+            {{ q.icon }} {{ q.text }}
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 对话区 -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- 消息列表 -->
+      <div ref="msgList" class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+
+        <!-- 欢迎屏 -->
+        <div v-if="messages.length === 0"
+          class="flex flex-col items-center justify-center h-full gap-4 text-center px-4">
+          <div class="text-5xl">🌾</div>
+          <div>
+            <h2 class="text-xl font-bold text-farm-800">欢迎使用农智</h2>
+            <p class="text-slate-500 text-sm mt-1">AI 驱动的智慧农场管理助手</p>
+          </div>
+          <div class="grid grid-cols-2 gap-2 mt-2 w-full max-w-sm">
+            <button v-for="q in quickPrompts" :key="q.text" @click="sendQuick(q.text)"
+              class="text-xs text-left px-3 py-2.5 bg-white border border-farm-200
+                     hover:border-farm-400 hover:bg-farm-50 rounded-xl transition shadow-sm text-slate-600">
+              <span class="block text-base mb-0.5">{{ q.icon }}</span>
+              {{ q.text }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 消息气泡 -->
+        <template v-for="(msg, idx) in messages" :key="idx">
+
+          <!-- 用户 -->
+          <div v-if="msg.role === 'user'" class="flex justify-end msg-enter">
+            <div class="max-w-[78%] px-4 py-2.5 bg-farm-600 text-white
+                        rounded-2xl rounded-br-sm shadow-sm text-sm leading-relaxed">
+              {{ msg.content }}
+            </div>
+          </div>
+
+          <!-- AI 文本 -->
+          <div v-else-if="msg.role === 'assistant' && msg.content" class="flex gap-3 msg-enter">
+            <div class="flex-none w-8 h-8 rounded-full bg-farm-500 flex items-center
+                        justify-center text-white text-sm shadow">🌱</div>
+            <div class="max-w-[82%] bg-white rounded-2xl rounded-tl-sm shadow-sm px-4 py-3 text-sm text-slate-800">
+              <div class="md-content" :class="{ cursor: msg.streaming }" v-html="renderMd(msg.content)"></div>
+            </div>
+          </div>
+
+          <!-- 工具组 -->
+          <div v-else-if="msg.role === 'tool_group'" class="flex gap-3 msg-enter">
+            <div class="flex-none w-8 h-8 rounded-full bg-amber-400 flex items-center
+                        justify-center text-white text-sm shadow">🔧</div>
+            <div class="max-w-[82%] w-full">
+              <div class="bg-amber-50 border border-amber-200 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden">
+
+                <!-- 工具组头（点击折叠） -->
+                <button @click="msg.expanded = !msg.expanded"
+                  class="w-full flex items-center justify-between px-4 py-2.5
+                         text-xs font-medium text-amber-800 hover:bg-amber-100 transition">
+                  <span class="flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0
+                           002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0
+                           001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0
+                           00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0
+                           00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0
+                           00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0
+                           00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0
+                           001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07
+                           2.572-1.065z"/>
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    <span>
+                      {{ msg.running ? '⏳ 正在调用工具…' : '✅ 工具调用完成' }}
+                      （{{ msg.tools.map(t => t.display_name).join('、') }}）
+                    </span>
+                  </span>
+                  <svg class="w-3.5 h-3.5 transition-transform" :class="msg.expanded ? 'rotate-180' : ''"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </button>
+
+                <!-- 工具详情 -->
+                <div v-show="msg.expanded" class="divide-y divide-amber-200">
+                  <div v-for="(tool, ti) in msg.tools" :key="ti" class="px-4 py-3 space-y-2">
+                    <div class="flex items-center justify-between">
+                      <span class="text-xs font-semibold text-amber-700">{{ tool.display_name }}</span>
+                      <span class="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+                        :class="tool.done ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'">
+                        {{ tool.done ? '完成' : '执行中…' }}
+                      </span>
+                    </div>
+                    <div>
+                      <p class="text-[10px] text-slate-400 uppercase tracking-wide mb-1">参数</p>
+                      <pre class="json-view bg-slate-800 text-slate-200 p-2 rounded-lg overflow-x-auto"
+                        >{{ JSON.stringify(tool.args, null, 2) }}</pre>
+                    </div>
+                    <div v-if="tool.done">
+                      <p class="text-[10px] text-slate-400 uppercase tracking-wide mb-1">返回结果</p>
+                      <pre class="json-view bg-slate-800 text-slate-200 p-2 rounded-lg overflow-x-auto"
+                        >{{ JSON.stringify(tool.result, null, 2) }}</pre>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
+        </template>
+
+        <!-- 等待骨架 -->
+        <div v-if="isStreaming && !hasStreamStarted" class="flex gap-3 msg-enter">
+          <div class="flex-none w-8 h-8 rounded-full bg-farm-500 flex items-center
+                      justify-center text-white text-sm shadow">🌱</div>
+          <div class="bg-white rounded-2xl rounded-tl-sm shadow-sm px-4 py-3">
+            <div class="flex gap-1 items-center h-5">
+              <span class="w-2 h-2 rounded-full bg-farm-400 animate-bounce" style="animation-delay:0ms"></span>
+              <span class="w-2 h-2 rounded-full bg-farm-400 animate-bounce" style="animation-delay:150ms"></span>
+              <span class="w-2 h-2 rounded-full bg-farm-400 animate-bounce" style="animation-delay:300ms"></span>
+            </div>
+          </div>
+        </div>
+
+        <div ref="anchor"></div>
+      </div>
+
+      <!-- 输入栏 -->
+      <div class="flex-none border-t border-farm-100 bg-white/80 backdrop-blur px-4 py-3">
+        <form @submit.prevent="sendMessage" class="flex gap-2 items-end">
+          <div class="flex-1 relative">
+            <textarea ref="inputEl" v-model="inputText"
+              @keydown.enter.exact.prevent="sendMessage"
+              @keydown.enter.shift.exact="inputText += '\n'"
+              @input="autoResize"
+              placeholder="请输入您的问题… (Enter 发送，Shift+Enter 换行)"
+              rows="1" :disabled="isStreaming"
+              class="w-full resize-none rounded-xl border border-farm-200
+                     focus:outline-none focus:ring-2 focus:ring-farm-400 focus:border-transparent
+                     px-4 py-2.5 text-sm text-slate-800 bg-white
+                     placeholder-slate-400 disabled:bg-slate-50 disabled:cursor-not-allowed
+                     transition max-h-36 overflow-y-auto leading-relaxed">
+            </textarea>
+          </div>
+          <button type="submit" :disabled="isStreaming || !inputText.trim()"
+            class="flex-none w-10 h-10 rounded-xl bg-farm-600 hover:bg-farm-700
+                   disabled:bg-slate-300 disabled:cursor-not-allowed
+                   text-white flex items-center justify-center shadow-sm
+                   transition active:scale-95">
+            <svg v-if="!isStreaming" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+            </svg>
+            <svg v-else class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
+            </svg>
+          </button>
+        </form>
+        <p class="text-[10px] text-slate-400 mt-1.5 text-center">
+          农智 AI · 由 DeepSeek 驱动 · 数据仅供参考
+        </p>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, nextTick, onMounted } = Vue
+
+createApp({
+  setup() {
+    // ─── 唯一改动：相对路径，同源请求，无需 CORS ───
+    const API = '/api'
+
+    const zones   = ['东北', '西北', '东南', '西南']
+    const sensors = ['🌡️ 温度', '💧 湿度', '🌫️ CO₂', '☀️ 光照']
+    const quickPrompts = [
+      { icon: '📊', text: '查看东南区概况' },
+      { icon: '📈', text: '东北区过去6小时温度趋势' },
+      { icon: '💧', text: '给西北区浇水 30 升' },
+      { icon: '📋', text: '查看操作日志' },
+    ]
+
+    const sessionId        = ref('')
+    const isConnected      = ref(false)
+    const messages         = ref([])
+    const inputText        = ref('')
+    const isStreaming      = ref(false)
+    const hasStreamStarted = ref(false)
+
+    const msgList = ref(null)
+    const anchor  = ref(null)
+    const inputEl = ref(null)
+
+    const renderMd = (text) => {
+      try { return marked.parse(text || '') } catch { return text || '' }
+    }
+
+    const scrollBottom = () => {
+      nextTick(() => anchor.value?.scrollIntoView({ behavior: 'smooth' }))
+    }
+
+    const autoResize = () => {
+      const el = inputEl.value
+      if (!el) return
+      el.style.height = 'auto'
+      el.style.height = Math.min(el.scrollHeight, 144) + 'px'
+    }
+
+    // ─── 会话管理 ───
+    const initSession = async () => {
+      try {
+        const res  = await fetch(`${API}/session`, { method: 'POST' })
+        const data = await res.json()
+        sessionId.value   = data.session_id
+        isConnected.value = true
+      } catch (e) {
+        console.error('初始化会话失败', e)
+        isConnected.value = false
+      }
+    }
+
+    const clearSession = async () => {
+      if (isStreaming.value) return
+      if (sessionId.value) {
+        await fetch(`${API}/session/${sessionId.value}`, { method: 'DELETE' }).catch(() => {})
+      }
+      messages.value = []
+      await initSession()
+    }
+
+    // ─── 发送消息 ───
+    const sendMessage = async () => {
+      const text = inputText.value.trim()
+      if (!text || isStreaming.value) return
+
+      messages.value.push({ role: 'user', content: text })
+      inputText.value = ''
+      nextTick(autoResize)
+      scrollBottom()
+
+      isStreaming.value      = true
+      hasStreamStarted.value = false
+
+      let assistantMsgIdx = -1
+      let toolGroupIdx    = -1
+
+      const getOrCreateAssistant = () => {
+        if (assistantMsgIdx === -1) {
+          messages.value.push({ role: 'assistant', content: '', streaming: true })
+          assistantMsgIdx        = messages.value.length - 1
+          hasStreamStarted.value = true
+        }
+        return assistantMsgIdx
+      }
+
+      const getOrCreateToolGroup = () => {
+        const last = messages.value[messages.value.length - 1]
+        if (last && last.role === 'tool_group' && last.running) {
+          toolGroupIdx = messages.value.length - 1
+        } else {
+          messages.value.push({ role: 'tool_group', tools: [], running: true, expanded: true })
+          toolGroupIdx           = messages.value.length - 1
+          hasStreamStarted.value = true
+        }
+        return toolGroupIdx
+      }
+
+      try {
+        const resp = await fetch(`${API}/chat`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ session_id: sessionId.value, content: text }),
+        })
+
+        if (!resp.ok) {
+          const err = await resp.json()
+          messages.value.push({
+            role: 'assistant',
+            content: `❌ 错误：${err.error || resp.statusText}`,
+            streaming: false,
+          })
+          return
+        }
+
+        // ── 读取 SSE ──
+        const reader  = resp.body.getReader()
+        const decoder = new TextDecoder()
+        let buf = ''
+
+        const parseEvents = (raw) => {
+          const events = []
+          for (const block of raw.split('\n\n')) {
+            if (!block.trim()) continue
+            let eventType = '', dataStr = ''
+            for (const line of block.split('\n')) {
+              if (line.startsWith('event:')) eventType = line.slice(6).trim()
+              else if (line.startsWith('data:')) dataStr = line.slice(5).trim()
+            }
+            if (eventType && dataStr) {
+              try { events.push({ type: eventType, data: JSON.parse(dataStr) }) } catch {}
+            }
+          }
+          return events
+        }
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          buf += decoder.decode(value, { stream: true })
+
+          const boundary = buf.lastIndexOf('\n\n')
+          if (boundary === -1) continue
+
+          const chunk = buf.slice(0, boundary + 2)
+          buf = buf.slice(boundary + 2)
+
+          for (const ev of parseEvents(chunk)) {
+            handleSSEEvent(ev)
+          }
+        }
+
+      } catch (e) {
+        console.error(e)
+        messages.value.push({
+          role: 'assistant',
+          content: `❌ 网络错误：${e.message}`,
+          streaming: false,
+        })
+      } finally {
+        messages.value.forEach(m => {
+          if (m.streaming) m.streaming = false
+          if (m.running)   m.running   = false
+        })
+        isStreaming.value      = false
+        hasStreamStarted.value = false
+        assistantMsgIdx        = -1
+        toolGroupIdx           = -1
+        nextTick(() => inputEl.value?.focus())
+      }
+
+      function handleSSEEvent({ type, data }) {
+        switch (type) {
+
+          case 'text_delta': {
+            const idx = getOrCreateAssistant()
+            messages.value[idx].content += data.content
+            scrollBottom()
+            break
+          }
+
+          case 'text_done': {
+            if (assistantMsgIdx !== -1)
+              messages.value[assistantMsgIdx].streaming = false
+            assistantMsgIdx = -1
+            break
+          }
+
+          case 'tool_start': {
+            const gIdx = getOrCreateToolGroup()
+            messages.value[gIdx].tools.push({
+              id:           data.id,
+              name:         data.name,
+              display_name: data.display_name,
+              args:         data.args,
+              result:       null,
+              done:         false,
+            })
+            scrollBottom()
+            break
+          }
+
+          case 'tool_done': {
+            if (toolGroupIdx !== -1) {
+              const tool = messages.value[toolGroupIdx].tools.find(t => t.id === data.id)
+              if (tool) { tool.result = data.result; tool.done = true }
+            }
+            scrollBottom()
+            break
+          }
+
+          case 'round_done': {
+            if (toolGroupIdx !== -1) {
+              messages.value[toolGroupIdx].running  = false
+              messages.value[toolGroupIdx].expanded = false
+            }
+            toolGroupIdx    = -1
+            assistantMsgIdx = -1
+            break
+          }
+
+          case 'error': {
+            messages.value.push({
+              role: 'assistant', content: `❌ 错误：${data.message}`, streaming: false,
+            })
+            scrollBottom()
+            break
+          }
+
+          case 'done': break
+        }
+      }
+    }
+
+    const sendQuick = (text) => {
+      if (isStreaming.value) return
+      inputText.value = text
+      sendMessage()
+    }
+
+    onMounted(async () => {
+      await initSession()
+      inputEl.value?.focus()
+    })
+
+    return {
+      zones, sensors, quickPrompts,
+      messages, inputText, isStreaming, hasStreamStarted,
+      isConnected, sessionId,
+      msgList, anchor, inputEl,
+      renderMd, sendMessage, sendQuick, clearSession, autoResize,
+    }
+  }
+}).mount('#app')
+</script>
+</body>
+</html>
