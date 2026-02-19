@@ -1,4 +1,3 @@
-streamlit
 openai
 python-dotenv
 flask>=3.0
