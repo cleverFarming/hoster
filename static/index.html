@@ -54,13 +54,35 @@
       from { opacity:0; transform:translateY(8px); }
       to   { opacity:1; transform:translateY(0); }
     }
+
+    /* 推理内容样式 */
+    .reasoning-content {
+      font-size: .82rem;
+      line-height: 1.6;
+      color: #6b7280;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .reasoning-cursor::after {
+      content: "▌";
+      animation: blink .7s step-start infinite;
+      color: #a78bfa;
+    }
+
+    /* 推理模式开关过渡 */
+    .toggle-track {
+      transition: background-color .2s ease;
+    }
+    .toggle-thumb {
+      transition: transform .2s ease;
+    }
   </style>
 </head>
 
 <body class="h-full bg-gradient-to-br from-farm-50 to-emerald-50 flex flex-col">
 <div id="app" class="h-screen flex flex-col overflow-hidden">
 
-  <!-- 顶栏 -->
+  <!-- ═══════════════ 顶栏 ═══════════════ -->
   <header class="flex-none bg-white/90 backdrop-blur border-b border-farm-200 shadow-sm">
     <div class="max-w-5xl mx-auto px-4 h-14 flex items-center justify-between">
       <div class="flex items-center gap-2">
@@ -71,6 +93,39 @@
         </div>
       </div>
       <div class="flex items-center gap-3">
+
+        <!-- ★ 推理模式开关 -->
+        <div class="flex items-center gap-2">
+          <div class="flex items-center gap-1.5">
+            <button @click="toggleReasoning" :disabled="isStreaming"
+              class="relative inline-flex h-5 w-9 items-center rounded-full transition
+                     disabled:opacity-40 disabled:cursor-not-allowed toggle-track"
+              :class="reasoningEnabled ? 'bg-violet-500' : 'bg-slate-300'"
+              :title="reasoningEnabled ? '关闭深度思考' : '开启深度思考'">
+              <span class="inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm toggle-thumb"
+                :class="reasoningEnabled ? 'translate-x-[18px]' : 'translate-x-[3px]'"></span>
+            </button>
+            <span class="text-xs whitespace-nowrap"
+              :class="reasoningEnabled ? 'text-violet-600 font-medium' : 'text-slate-400'">
+              🧠 深度思考
+            </span>
+          </div>
+
+          <!-- 推理力度选择 -->
+          <select v-if="reasoningEnabled" v-model="reasoningEffort"
+            @change="updateReasoningEffort"
+            :disabled="isStreaming"
+            class="text-xs border border-violet-200 rounded-md px-1.5 py-1
+                   bg-violet-50 text-violet-700 focus:outline-none focus:ring-1
+                   focus:ring-violet-400 disabled:opacity-40 disabled:cursor-not-allowed">
+            <option value="low">轻度</option>
+            <option value="medium">中度</option>
+            <option value="high">深度</option>
+          </select>
+        </div>
+
+        <div class="w-px h-5 bg-slate-200"></div>
+
         <div class="flex items-center gap-1.5 text-xs">
           <span class="w-2 h-2 rounded-full transition-colors"
             :class="isConnected ? 'bg-farm-500 animate-pulse' : 'bg-slate-300'"></span>
@@ -92,7 +147,7 @@
     </div>
   </header>
 
-  <!-- 主体 -->
+  <!-- ═══════════════ 主体 ═══════════════ -->
   <div class="flex-1 flex overflow-hidden max-w-5xl mx-auto w-full">
 
     <!-- 侧栏 -->
@@ -114,6 +169,24 @@
           </span>
         </div>
       </div>
+
+      <!-- ★ 推理模式状态卡片 -->
+      <div v-if="reasoningEnabled"
+        class="bg-violet-50 border border-violet-200 rounded-xl p-3 space-y-1.5">
+        <p class="text-xs font-semibold text-violet-700 flex items-center gap-1">
+          🧠 深度思考已开启
+        </p>
+        <p class="text-[10px] text-violet-500 leading-relaxed">
+          模型将展示推理过程，回复可能更慢但更精确。
+        </p>
+        <div class="flex items-center gap-1.5">
+          <span class="text-[10px] text-violet-400">推理力度：</span>
+          <span class="text-[10px] font-medium text-violet-600">
+            {{ { low: '🔵 轻度', medium: '🟡 中度', high: '🔴 深度' }[reasoningEffort] }}
+          </span>
+        </div>
+      </div>
+
       <div>
         <p class="text-xs font-semibold text-farm-700 uppercase tracking-wide mb-2">⚡ 快速指令</p>
         <div class="flex flex-col gap-1.5">
@@ -128,7 +201,7 @@
       </div>
     </aside>
 
-    <!-- 对话区 -->
+    <!-- ═══════════════ 对话区 ═══════════════ -->
     <main class="flex-1 flex flex-col overflow-hidden">
 
       <!-- 消息列表 -->
@@ -142,6 +215,13 @@
             <h2 class="text-xl font-bold text-farm-800">欢迎使用农智</h2>
             <p class="text-slate-500 text-sm mt-1">AI 驱动的智慧农场管理助手</p>
           </div>
+          <!-- 推理模式提示 -->
+          <div v-if="reasoningEnabled"
+            class="flex items-center gap-2 px-3 py-2 bg-violet-50 border border-violet-200
+                   rounded-xl text-xs text-violet-600">
+            <span>🧠</span>
+            <span>深度思考模式已开启，AI 会展示详细推理过程</span>
+          </div>
           <div class="grid grid-cols-2 gap-2 mt-2 w-full max-w-sm">
             <button v-for="q in quickPrompts" :key="q.text" @click="sendQuick(q.text)"
               class="text-xs text-left px-3 py-2.5 bg-white border border-farm-200
@@ -152,7 +232,7 @@
           </div>
         </div>
 
-        <!-- 消息气泡 -->
+        <!-- ═══════════════ 消息气泡 ═══════════════ -->
         <template v-for="(msg, idx) in messages" :key="idx">
 
           <!-- 用户 -->
@@ -163,12 +243,45 @@
             </div>
           </div>
 
-          <!-- AI 文本 -->
-          <div v-else-if="msg.role === 'assistant' && msg.content" class="flex gap-3 msg-enter">
-            <div class="flex-none w-8 h-8 rounded-full bg-farm-500 flex items-center
-                        justify-center text-white text-sm shadow">🌱</div>
-            <div class="max-w-[82%] bg-white rounded-2xl rounded-tl-sm shadow-sm px-4 py-3 text-sm text-slate-800">
-              <div class="md-content" :class="{ cursor: msg.streaming }" v-html="renderMd(msg.content)"></div>
+          <!-- ★ AI 推理过程 + 正文 -->
+          <div v-else-if="msg.role === 'assistant' && (msg.content || msg.reasoning_content)" class="flex gap-3 msg-enter">
+            <div class="flex-none w-8 h-8 rounded-full flex items-center justify-center text-white text-sm shadow"
+              :class="msg.reasoning_content ? 'bg-violet-500' : 'bg-farm-500'">
+              {{ msg.reasoning_content ? '🧠' : '🌱' }}
+            </div>
+            <div class="max-w-[82%] space-y-2">
+
+              <!-- 推理过程折叠块 -->
+              <div v-if="msg.reasoning_content"
+                class="bg-violet-50 border border-violet-200 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden">
+                <button @click="msg.reasoning_expanded = !msg.reasoning_expanded"
+                  class="w-full flex items-center justify-between px-4 py-2
+                         text-xs font-medium text-violet-700 hover:bg-violet-100 transition">
+                  <span class="flex items-center gap-1.5">
+                    <span>🧠</span>
+                    <span>{{ msg.reasoning_streaming ? '正在思考…' : '思考过程' }}</span>
+                    <span v-if="!msg.reasoning_streaming" class="text-violet-400 font-normal">
+                      （{{ msg.reasoning_content.length }} 字）
+                    </span>
+                  </span>
+                  <svg class="w-3.5 h-3.5 transition-transform" :class="msg.reasoning_expanded ? 'rotate-180' : ''"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </button>
+                <div v-show="msg.reasoning_expanded" class="px-4 py-3 border-t border-violet-200">
+                  <div class="reasoning-content" :class="{ 'reasoning-cursor': msg.reasoning_streaming }">
+                    {{ msg.reasoning_content }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- 正文 -->
+              <div v-if="msg.content"
+                class="bg-white rounded-2xl shadow-sm px-4 py-3 text-sm text-slate-800"
+                :class="{ 'rounded-tl-sm': !msg.reasoning_content }">
+                <div class="md-content" :class="{ cursor: msg.streaming }" v-html="renderMd(msg.content)"></div>
+              </div>
             </div>
           </div>
 
@@ -179,7 +292,6 @@
             <div class="max-w-[82%] w-full">
               <div class="bg-amber-50 border border-amber-200 rounded-2xl rounded-tl-sm shadow-sm overflow-hidden">
 
-                <!-- 工具组头（点击折叠） -->
                 <button @click="msg.expanded = !msg.expanded"
                   class="w-full flex items-center justify-between px-4 py-2.5
                          text-xs font-medium text-amber-800 hover:bg-amber-100 transition">
@@ -209,7 +321,6 @@
                   </svg>
                 </button>
 
-                <!-- 工具详情 -->
                 <div v-show="msg.expanded" class="divide-y divide-amber-200">
                   <div v-for="(tool, ti) in msg.tools" :key="ti" class="px-4 py-3 space-y-2">
                     <div class="flex items-center justify-between">
@@ -240,13 +351,21 @@
 
         <!-- 等待骨架 -->
         <div v-if="isStreaming && !hasStreamStarted" class="flex gap-3 msg-enter">
-          <div class="flex-none w-8 h-8 rounded-full bg-farm-500 flex items-center
-                      justify-center text-white text-sm shadow">🌱</div>
+          <div class="flex-none w-8 h-8 rounded-full flex items-center justify-center text-white text-sm shadow"
+            :class="reasoningEnabled ? 'bg-violet-500' : 'bg-farm-500'">
+            {{ reasoningEnabled ? '🧠' : '🌱' }}
+          </div>
           <div class="bg-white rounded-2xl rounded-tl-sm shadow-sm px-4 py-3">
             <div class="flex gap-1 items-center h-5">
-              <span class="w-2 h-2 rounded-full bg-farm-400 animate-bounce" style="animation-delay:0ms"></span>
-              <span class="w-2 h-2 rounded-full bg-farm-400 animate-bounce" style="animation-delay:150ms"></span>
-              <span class="w-2 h-2 rounded-full bg-farm-400 animate-bounce" style="animation-delay:300ms"></span>
+              <span class="w-2 h-2 rounded-full animate-bounce"
+                :class="reasoningEnabled ? 'bg-violet-400' : 'bg-farm-400'"
+                style="animation-delay:0ms"></span>
+              <span class="w-2 h-2 rounded-full animate-bounce"
+                :class="reasoningEnabled ? 'bg-violet-400' : 'bg-farm-400'"
+                style="animation-delay:150ms"></span>
+              <span class="w-2 h-2 rounded-full animate-bounce"
+                :class="reasoningEnabled ? 'bg-violet-400' : 'bg-farm-400'"
+                style="animation-delay:300ms"></span>
             </div>
           </div>
         </div>
@@ -254,7 +373,7 @@
         <div ref="anchor"></div>
       </div>
 
-      <!-- 输入栏 -->
+      <!-- ═══════════════ 输入栏 ═══════════════ -->
       <div class="flex-none border-t border-farm-100 bg-white/80 backdrop-blur px-4 py-3">
         <form @submit.prevent="sendMessage" class="flex gap-2 items-end">
           <div class="flex-1 relative">
@@ -262,20 +381,28 @@
               @keydown.enter.exact.prevent="sendMessage"
               @keydown.enter.shift.exact="inputText += '\n'"
               @input="autoResize"
-              placeholder="请输入您的问题… (Enter 发送，Shift+Enter 换行)"
+              :placeholder="reasoningEnabled
+                ? '深度思考模式 · 请输入问题… (Enter 发送)'
+                : '请输入您的问题… (Enter 发送，Shift+Enter 换行)'"
               rows="1" :disabled="isStreaming"
-              class="w-full resize-none rounded-xl border border-farm-200
-                     focus:outline-none focus:ring-2 focus:ring-farm-400 focus:border-transparent
+              class="w-full resize-none rounded-xl border
+                     focus:outline-none focus:ring-2 focus:border-transparent
                      px-4 py-2.5 text-sm text-slate-800 bg-white
                      placeholder-slate-400 disabled:bg-slate-50 disabled:cursor-not-allowed
-                     transition max-h-36 overflow-y-auto leading-relaxed">
+                     transition max-h-36 overflow-y-auto leading-relaxed"
+              :class="reasoningEnabled
+                ? 'border-violet-200 focus:ring-violet-400'
+                : 'border-farm-200 focus:ring-farm-400'">
             </textarea>
           </div>
           <button type="submit" :disabled="isStreaming || !inputText.trim()"
-            class="flex-none w-10 h-10 rounded-xl bg-farm-600 hover:bg-farm-700
+            class="flex-none w-10 h-10 rounded-xl
                    disabled:bg-slate-300 disabled:cursor-not-allowed
                    text-white flex items-center justify-center shadow-sm
-                   transition active:scale-95">
+                   transition active:scale-95"
+            :class="reasoningEnabled
+              ? 'bg-violet-500 hover:bg-violet-600'
+              : 'bg-farm-600 hover:bg-farm-700'">
             <svg v-if="!isStreaming" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
@@ -287,7 +414,9 @@
           </button>
         </form>
         <p class="text-[10px] text-slate-400 mt-1.5 text-center">
-          农智 AI · 由 DeepSeek 驱动 · 数据仅供参考
+          农智 AI · 由 DeepSeek 驱动
+          <span v-if="reasoningEnabled" class="text-violet-400">· 🧠 深度思考模式</span>
+          · 数据仅供参考
         </p>
       </div>
 
@@ -295,12 +424,14 @@
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════════════
+     Vue 应用
+     ═══════════════════════════════════════════════════════════════ -->
 <script>
-const { createApp, ref, nextTick, onMounted } = Vue
+const { createApp, ref, nextTick, onMounted, watch } = Vue
 
 createApp({
   setup() {
-    // ─── 唯一改动：相对路径，同源请求，无需 CORS ───
     const API = '/api'
 
     const zones   = ['东北', '西北', '东南', '西南']
@@ -316,8 +447,12 @@ createApp({
     const isConnected      = ref(false)
     const messages         = ref([])
     const inputText        = ref('')
-    const isStreaming      = ref(false)
+    const isStreaming       = ref(false)
     const hasStreamStarted = ref(false)
+
+    // ★ 推理模式状态
+    const reasoningEnabled = ref(false)
+    const reasoningEffort  = ref('medium')
 
     const msgList = ref(null)
     const anchor  = ref(null)
@@ -345,6 +480,9 @@ createApp({
         const data = await res.json()
         sessionId.value   = data.session_id
         isConnected.value = true
+
+        // 获取推理模式初始状态
+        await fetchReasoningState()
       } catch (e) {
         console.error('初始化会话失败', e)
         isConnected.value = false
@@ -358,6 +496,57 @@ createApp({
       }
       messages.value = []
       await initSession()
+    }
+
+    // ─── ★ 推理模式控制 ───
+    const fetchReasoningState = async () => {
+      if (!sessionId.value) return
+      try {
+        const res  = await fetch(`${API}/session/${sessionId.value}/reasoning`)
+        const data = await res.json()
+        reasoningEnabled.value = data.reasoning
+        reasoningEffort.value  = data.reasoning_effort
+      } catch (e) {
+        console.warn('获取推理状态失败', e)
+      }
+    }
+
+    const toggleReasoning = async () => {
+      if (isStreaming.value || !sessionId.value) return
+      const newVal = !reasoningEnabled.value
+      try {
+        const res = await fetch(`${API}/session/${sessionId.value}/reasoning`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            reasoning:        newVal,
+            reasoning_effort: reasoningEffort.value,
+          }),
+        })
+        const data = await res.json()
+        reasoningEnabled.value = data.reasoning
+        reasoningEffort.value  = data.reasoning_effort
+      } catch (e) {
+        console.error('切换推理模式失败', e)
+      }
+    }
+
+    const updateReasoningEffort = async () => {
+      if (!sessionId.value) return
+      try {
+        const res = await fetch(`${API}/session/${sessionId.value}/reasoning`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({
+            reasoning:        reasoningEnabled.value,
+            reasoning_effort: reasoningEffort.value,
+          }),
+        })
+        const data = await res.json()
+        reasoningEffort.value = data.reasoning_effort
+      } catch (e) {
+        console.error('更新推理力度失败', e)
+      }
     }
 
     // ─── 发送消息 ───
@@ -378,7 +567,14 @@ createApp({
 
       const getOrCreateAssistant = () => {
         if (assistantMsgIdx === -1) {
-          messages.value.push({ role: 'assistant', content: '', streaming: true })
+          messages.value.push({
+            role: 'assistant',
+            content: '',
+            reasoning_content: '',
+            reasoning_streaming: false,
+            reasoning_expanded: true,       // 推理过程默认展开
+            streaming: true,
+          })
           assistantMsgIdx        = messages.value.length - 1
           hasStreamStarted.value = true
         }
@@ -461,8 +657,13 @@ createApp({
         })
       } finally {
         messages.value.forEach(m => {
-          if (m.streaming) m.streaming = false
-          if (m.running)   m.running   = false
+          if (m.streaming)           m.streaming           = false
+          if (m.reasoning_streaming) m.reasoning_streaming = false
+          if (m.running)             m.running             = false
+          // 推理完成后自动折叠
+          if (m.reasoning_content && m.reasoning_expanded) {
+            m.reasoning_expanded = false
+          }
         })
         isStreaming.value      = false
         hasStreamStarted.value = false
@@ -474,9 +675,36 @@ createApp({
       function handleSSEEvent({ type, data }) {
         switch (type) {
 
+          // ★ 推理过程流式片段
+          case 'reasoning_delta': {
+            const idx = getOrCreateAssistant()
+            const msg = messages.value[idx]
+            msg.reasoning_content   += data.content
+            msg.reasoning_streaming  = true
+            msg.reasoning_expanded   = true
+            scrollBottom()
+            break
+          }
+
+          // ★ 推理过程完成
+          case 'reasoning_done': {
+            if (assistantMsgIdx !== -1) {
+              const msg = messages.value[assistantMsgIdx]
+              msg.reasoning_streaming = false
+              // 推理完成后自动折叠（可选保持展开）
+              // msg.reasoning_expanded = false
+            }
+            break
+          }
+
           case 'text_delta': {
             const idx = getOrCreateAssistant()
-            messages.value[idx].content += data.content
+            const msg = messages.value[idx]
+            msg.content += data.content
+            // 正文开始时，折叠推理过程
+            if (msg.reasoning_content && msg.reasoning_expanded) {
+              msg.reasoning_expanded = false
+            }
             scrollBottom()
             break
           }
@@ -549,8 +777,10 @@ createApp({
       zones, sensors, quickPrompts,
       messages, inputText, isStreaming, hasStreamStarted,
       isConnected, sessionId,
+      reasoningEnabled, reasoningEffort,
       msgList, anchor, inputEl,
       renderMd, sendMessage, sendQuick, clearSession, autoResize,
+      toggleReasoning, updateReasoningEffort,
     }
   }
 }).mount('#app')
