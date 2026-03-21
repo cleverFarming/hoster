@@ -11,9 +11,9 @@ tools 包 —— 自动发现并注册所有工具模块
     TOOL_DISPLAY_NAMES   dict[str, str]   {name: display_name}
     call_tool(name, args) -> str          统一调度，返回 JSON
     init_db()                             初始化数据库表
-    start_sensor_collector(interval)      启动后台采集线程
-    stop_sensor_collector()               停止后台采集线程
-    is_collector_running() -> bool        采集线程是否运行中
+    connect_rosbridge(url, timeout)       连接 rosbridge WebSocket
+    disconnect_rosbridge()                断开 rosbridge 连接
+    is_rosbridge_connected() -> bool      连接状态
 """
 
 import importlib
@@ -21,10 +21,10 @@ import pkgutil
 
 from ._registry  import ToolRegistry
 from ._db        import init_db
-from ._simulator import (
-    start_collector  as start_sensor_collector,
-    stop_collector   as stop_sensor_collector,
-    is_collector_running,
+from ._ws_client import (
+    connect_rosbridge,
+    disconnect_rosbridge,
+    is_rosbridge_connected,
 )
 
 # ── 自动导入所有非 _ 开头的子模块，触发 @register 装饰器 ──
@@ -42,7 +42,7 @@ __all__ = [
     "TOOL_DISPLAY_NAMES",
     "call_tool",
     "init_db",
-    "start_sensor_collector",
-    "stop_sensor_collector",
-    "is_collector_running",
+    "connect_rosbridge",
+    "disconnect_rosbridge",
+    "is_rosbridge_connected",
 ]
