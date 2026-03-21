@@ -78,11 +78,22 @@ class ToolRegistry:
     @classmethod
     def call(cls, name: str, args: dict) -> str:
         """统一调度入口，返回 JSON 字符串"""
+        display = cls._entries.get(name, {}).get("display_name", name)
+        print(f"[tool] ▶ {display} ({name})  args={json.dumps(args, ensure_ascii=False)}")
+
         entry = cls._entries.get(name)
         if not entry:
-            return json.dumps({"error": f"未知工具: {name}"}, ensure_ascii=False)
+            err = json.dumps({"error": f"未知工具: {name}"}, ensure_ascii=False)
+            print(f"[tool] ✗ {name}  {err}")
+            return err
         try:
             result = entry["fn"](**args)
-            return json.dumps(result, ensure_ascii=False)
+            result_str = json.dumps(result, ensure_ascii=False)
+            # 截取前 500 字符避免图片 base64 等大数据刷屏
+            preview = result_str[:500] + ("..." if len(result_str) > 500 else "")
+            print(f"[tool] ✓ {display}  ({len(result_str)} chars)  {preview}")
+            return result_str
         except Exception as e:
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
+            err = json.dumps({"error": str(e)}, ensure_ascii=False)
+            print(f"[tool] ✗ {display}  {err}")
+            return err

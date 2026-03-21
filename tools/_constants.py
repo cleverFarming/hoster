@@ -1,12 +1,19 @@
-"""共享常量 & 可复用的 JSON Schema 片段"""
+"""共享常量 & 可复用的 JSON Schema 片段 & ROS2 服务映射"""
 
+import os
+
+# ── 数据库（保留用于本地日志缓存） ──
 DB_PATH = "farm.db"
 
-ZONES   = ["东北", "西北", "东南", "西南"]
-SENSORS = ["temperature", "humidity", "co2", "light"]
-UNITS   = {"temperature": "°C", "humidity": "%", "co2": "ppm", "light": "lux"}
-NAMES   = {"temperature": "温度", "humidity": "湿度", "co2": "CO₂浓度", "light": "光照强度"}
+# ═══════════════════ ROS2 / rosbridge 配置 ═══════════════════
 
-# ── 可复用的参数 Schema 片段（工具文件直接引用） ──
-ZONE_PARAM   = {"type": "string", "enum": ZONES,   "description": "区域：东北/西北/东南/西南"}
-SENSOR_PARAM = {"type": "string", "enum": SENSORS, "description": "传感器：temperature/humidity/co2/light"}
+ROSBRIDGE_URL     = os.environ.get("ROSBRIDGE_URL",     "ws://localhost:9090")
+ROSBRIDGE_TIMEOUT = float(os.environ.get("ROSBRIDGE_TIMEOUT", "10"))
+
+# ROS2 服务名映射 —— 工具名 → ROS2 service 路径
+# 机器人端需实现对应的 service server
+ROS_SERVICES = {
+    "get_time":           "/farm/get_time",
+    "read_logs":          "/farm/read_logs",
+    "write_log":          "/farm/write_log",
+}

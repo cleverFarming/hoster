@@ -1,10 +1,8 @@
-"""工具：写入操作日志"""
-
-import sqlite3
-from datetime import datetime
+"""工具：写入操作日志（通过 ROS2 服务）"""
 
 from ._registry  import ToolRegistry
-from ._constants import DB_PATH
+from ._constants import ROS_SERVICES, ROSBRIDGE_TIMEOUT
+from ._ws_client import rosbridge
 
 
 @ToolRegistry.register(
@@ -18,9 +16,14 @@ from ._constants import DB_PATH
     required=["operation_type", "details"],
 )
 def write_log(operation_type: str, details: str) -> dict:
-    with sqlite3.connect(DB_PATH) as c:
-        c.execute(
-            "INSERT INTO logs VALUES(NULL,?,?,?,?)",
-            (datetime.now().isoformat(), operation_type, details, "AI"),
-        )
-    return {"status": "success", "message": "日志已写入"}
+    """
+    调用 ROS2 服务: /farm/write_log
+    请求 args:  {"operation_type": "施肥", "details": "东北区域施有机肥 5kg"}
+    期望返回 values: {"status": "success", "message": "日志已写入"}
+    """
+    resp = rosbridge.call_service(
+        ROS_SERVICES["write_log"],
+        args={"operation_type": operation_type, "details": details},
+        timeout=ROSBRIDGE_TIMEOUT,
+    )
+    return resp

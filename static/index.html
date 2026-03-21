@@ -43,6 +43,12 @@
     .md-content th,.md-content td { border:1px solid #cbd5e1; padding:.3em .6em; text-align:left; }
     .md-content th { background:#f0fdf4; }
     .md-content blockquote { border-left:3px solid #4ade80; padding-left:.75em; color:#475569; margin:.4em 0; }
+    .md-content img { max-width:100%; border-radius:.5em; margin:.5em 0; }
+
+    .camera-embed img { max-width:100%; border-radius:.5em; cursor:pointer; transition:opacity .2s; }
+    .camera-embed img:hover { opacity:.9; }
+    .camera-embed .stream-badge { font-size:.6rem; background:#ef4444; color:#fff; padding:1px 6px; border-radius:9999px; animation:pulse-dot 1.5s infinite; }
+    @keyframes pulse-dot { 0%,100%{opacity:1;} 50%{opacity:.5;} }
 
     .cursor::after { content:"▌"; animation:blink .7s step-start infinite; }
     @keyframes blink { 50% { opacity:0; } }
@@ -134,14 +140,12 @@
         <button @click="clearSession" :disabled="isStreaming"
           class="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-slate-600
                  bg-slate-100 hover:bg-slate-200 rounded-lg
-                 disabled:opacity-40 disabled:cursor-not-allowed transition">
+                 disabled:opacity-40 disabled:cursor-not-allowed transition md:hidden">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0
-                 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0
-                 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+              d="M12 4v16m8-8H4"/>
           </svg>
-          清空对话
+          新对话
         </button>
       </div>
     </div>
@@ -151,54 +155,132 @@
   <div class="flex-1 flex overflow-hidden max-w-5xl mx-auto w-full">
 
     <!-- 侧栏 -->
-    <aside class="hidden md:flex flex-col w-52 flex-none border-r border-farm-100 bg-white/60 py-4 px-3 gap-4">
-      <div>
-        <p class="text-xs font-semibold text-farm-700 uppercase tracking-wide mb-2">📍 农场区域</p>
-        <div class="flex flex-wrap gap-1.5">
-          <span v-for="z in zones" :key="z"
-            class="px-2 py-1 bg-farm-100 text-farm-700 text-xs rounded-md font-medium">
-            {{ z }}
-          </span>
-        </div>
+    <aside class="hidden md:flex flex-col w-64 flex-none border-r border-slate-200/60
+                  bg-gradient-to-b from-white/80 to-slate-50/60 backdrop-blur-sm overflow-hidden">
+
+      <!-- 顶部：新建对话 -->
+      <div class="flex-none px-4 pt-4 pb-3">
+        <button @click="clearSession" :disabled="isStreaming"
+          class="flex items-center justify-center gap-2 w-full px-4 py-2.5 text-sm font-medium
+                 border border-farm-200 text-farm-700 bg-white rounded-xl
+                 hover:bg-farm-50 hover:border-farm-300 hover:shadow-sm
+                 disabled:opacity-40 disabled:cursor-not-allowed
+                 transition-all duration-200 active:scale-[0.98]">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+          </svg>
+          新建对话
+        </button>
       </div>
-      <div>
-        <p class="text-xs font-semibold text-farm-700 uppercase tracking-wide mb-2">📡 传感器</p>
-        <div class="flex flex-col gap-1">
-          <span v-for="s in sensors" :key="s" class="flex items-center gap-1.5 text-xs text-slate-600">
-            <span class="w-1.5 h-1.5 rounded-full bg-farm-400"></span>{{ s }}
-          </span>
+
+      <!-- 分隔线 -->
+      <div class="mx-4 border-t border-slate-200/60"></div>
+
+      <!-- 会话历史列表 -->
+      <div class="flex-1 overflow-y-auto px-3 py-3">
+        <p class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2 px-2">
+          历史对话
+        </p>
+        <div v-if="conversationList.length === 0"
+          class="flex flex-col items-center justify-center py-8 text-slate-400">
+          <svg class="w-8 h-8 mb-2 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863
+                 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3
+                 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+          </svg>
+          <span class="text-xs">暂无历史对话</span>
+        </div>
+        <div class="space-y-0.5">
+          <div v-for="conv in conversationList" :key="conv.id"
+            class="group flex items-center gap-2 px-3 py-2.5 rounded-xl cursor-pointer
+                   text-[13px] leading-snug transition-all duration-150"
+            :class="conv.id === sessionId
+              ? 'bg-farm-100/80 text-farm-800 font-medium shadow-sm'
+              : 'text-slate-600 hover:bg-white/80 hover:shadow-sm'"
+            @click="loadConversation(conv.id)">
+
+            <!-- 对话图标 -->
+            <svg v-if="editingConvId !== conv.id"
+              class="w-4 h-4 flex-none opacity-40"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863
+                   9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3
+                   12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+            </svg>
+
+            <!-- 编辑模式 -->
+            <template v-if="editingConvId === conv.id">
+              <input v-model="editingTitle" @keydown.enter="finishRename(conv.id)"
+                @keydown.esc="editingConvId = ''" @blur="finishRename(conv.id)"
+                class="flex-1 text-[13px] border border-farm-300 rounded-lg px-2 py-1
+                       bg-white focus:outline-none focus:ring-2 focus:ring-farm-400/50"
+                ref="renameInput" />
+            </template>
+
+            <!-- 正常显示 -->
+            <template v-else>
+              <span class="flex-1 truncate">{{ conv.title }}</span>
+              <div class="hidden group-hover:flex items-center gap-1 flex-none">
+                <button @click.stop="startRename(conv)"
+                  class="p-1 rounded-lg hover:bg-slate-200/80 text-slate-400
+                         hover:text-slate-600 transition" title="重命名">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0
+                         002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828
+                         15H9v-2.828l8.586-8.586z"/>
+                  </svg>
+                </button>
+                <button @click.stop="deleteConversation(conv.id)"
+                  class="p-1 rounded-lg hover:bg-red-100/80 text-slate-400
+                         hover:text-red-500 transition" title="删除">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0
+                         01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0
+                         00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                  </svg>
+                </button>
+              </div>
+            </template>
+          </div>
         </div>
       </div>
 
-      <!-- ★ 推理模式状态卡片 -->
-      <div v-if="reasoningEnabled"
-        class="bg-violet-50 border border-violet-200 rounded-xl p-3 space-y-1.5">
-        <p class="text-xs font-semibold text-violet-700 flex items-center gap-1">
-          🧠 深度思考已开启
-        </p>
-        <p class="text-[10px] text-violet-500 leading-relaxed">
-          模型将展示推理过程，回复可能更慢但更精确。
-        </p>
-        <div class="flex items-center gap-1.5">
-          <span class="text-[10px] text-violet-400">推理力度：</span>
-          <span class="text-[10px] font-medium text-violet-600">
-            {{ { low: '🔵 轻度', medium: '🟡 中度', high: '🔴 深度' }[reasoningEffort] }}
-          </span>
+      <!-- 底部：推理模式状态卡片 -->
+      <div v-if="reasoningEnabled" class="flex-none px-3 pb-3">
+        <div class="bg-violet-50/80 border border-violet-200/60 rounded-xl p-3 space-y-1.5">
+          <p class="text-xs font-semibold text-violet-700 flex items-center gap-1.5">
+            🧠 深度思考已开启
+          </p>
+          <div class="flex items-center gap-1.5">
+            <span class="text-[10px] text-violet-400">推理力度：</span>
+            <span class="text-[10px] font-medium text-violet-600">
+              {{ { low: '🔵 轻度', medium: '🟡 中度', high: '🔴 深度' }[reasoningEffort] }}
+            </span>
+          </div>
         </div>
       </div>
 
-      <div>
-        <p class="text-xs font-semibold text-farm-700 uppercase tracking-wide mb-2">⚡ 快速指令</p>
-        <div class="flex flex-col gap-1.5">
-          <button v-for="q in quickPrompts" :key="q.text"
-            @click="sendQuick(q.text)" :disabled="isStreaming"
-            class="text-left text-xs text-slate-600 hover:text-farm-700 hover:bg-farm-50
-                   px-2 py-1.5 rounded-md transition
-                   disabled:opacity-40 disabled:cursor-not-allowed leading-snug">
-            {{ q.icon }} {{ q.text }}
-          </button>
-        </div>
+      <!-- 底部：清空全部历史 -->
+      <div v-if="conversationList.length > 0" class="flex-none px-4 pb-3">
+        <button @click="clearAllConversations" :disabled="isStreaming"
+          class="flex items-center justify-center gap-1.5 w-full px-3 py-2 text-xs
+                 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl
+                 disabled:opacity-40 disabled:cursor-not-allowed
+                 transition-all duration-200">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0
+                 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0
+                 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+          </svg>
+          清空全部历史
+        </button>
       </div>
+
     </aside>
 
     <!-- ═══════════════ 对话区 ═══════════════ -->
@@ -221,14 +303,6 @@
                    rounded-xl text-xs text-violet-600">
             <span>🧠</span>
             <span>深度思考模式已开启，AI 会展示详细推理过程</span>
-          </div>
-          <div class="grid grid-cols-2 gap-2 mt-2 w-full max-w-sm">
-            <button v-for="q in quickPrompts" :key="q.text" @click="sendQuick(q.text)"
-              class="text-xs text-left px-3 py-2.5 bg-white border border-farm-200
-                     hover:border-farm-400 hover:bg-farm-50 rounded-xl transition shadow-sm text-slate-600">
-              <span class="block text-base mb-0.5">{{ q.icon }}</span>
-              {{ q.text }}
-            </button>
           </div>
         </div>
 
@@ -280,7 +354,7 @@
               <div v-if="msg.content"
                 class="bg-white rounded-2xl shadow-sm px-4 py-3 text-sm text-slate-800"
                 :class="{ 'rounded-tl-sm': !msg.reasoning_content }">
-                <div class="md-content" :class="{ cursor: msg.streaming }" v-html="renderMd(msg.content)"></div>
+                <div class="md-content" :class="{ cursor: msg.streaming }" v-html="msg.renderedHtml || renderMd(msg.content)"></div>
               </div>
             </div>
           </div>
@@ -336,6 +410,49 @@
                         >{{ JSON.stringify(tool.args, null, 2) }}</pre>
                     </div>
                     <div v-if="tool.done">
+                      <!-- 摄像头图片/视频流内嵌显示 -->
+                      <div v-if="tool.result && (tool.result.snapshot_url || tool.result.stream_url || tool.result.cameras || tool.result.streams)"
+                        class="camera-embed mb-2 space-y-2">
+                        <!-- 单路截图/视频流 -->
+                        <template v-if="tool.result.snapshot_url && !tool.result.cameras && !tool.result.streams">
+                          <div class="rounded-lg overflow-hidden border border-slate-200">
+                            <img :src="tool.result.snapshot_url" :alt="tool.result.topic || '摄像头截图'"
+                              @error="$event.target.src=''; $event.target.alt='图片加载失败'" class="w-full" />
+                          </div>
+                          <div class="flex gap-2 text-[10px]">
+                            <a :href="tool.result.snapshot_url" target="_blank"
+                              class="text-blue-500 hover:underline">打开截图</a>
+                            <a v-if="tool.result.stream_url" :href="tool.result.stream_url" target="_blank"
+                              class="text-blue-500 hover:underline">打开视频流 <span class="stream-badge">LIVE</span></a>
+                          </div>
+                        </template>
+                        <!-- 多路摄像头（check_camera_status） -->
+                        <template v-if="tool.result.cameras">
+                          <div v-for="(cam, ci) in tool.result.cameras" :key="ci"
+                            class="rounded-lg overflow-hidden border border-slate-200">
+                            <div class="text-[10px] px-2 py-1 bg-slate-100 text-slate-500 flex justify-between items-center">
+                              <span>{{ cam.description }} <code class="text-[9px]">{{ cam.topic }}</code></span>
+                              <div class="flex gap-2">
+                                <a v-if="cam.snapshot_url" :href="cam.snapshot_url" target="_blank" class="text-blue-500 hover:underline">截图</a>
+                                <a v-if="cam.stream_url" :href="cam.stream_url" target="_blank" class="text-blue-500 hover:underline">视频流 <span class="stream-badge">LIVE</span></a>
+                              </div>
+                            </div>
+                            <img v-if="cam.snapshot_url" :src="cam.snapshot_url" :alt="cam.description"
+                              @error="$event.target.style.display='none'" class="w-full" />
+                          </div>
+                        </template>
+                        <!-- 多路视频流（get_camera_stream） -->
+                        <template v-if="tool.result.streams">
+                          <div v-for="(s, si) in tool.result.streams" :key="si"
+                            class="rounded-lg overflow-hidden border border-slate-200">
+                            <div class="text-[10px] px-2 py-1 bg-slate-100 text-slate-500 flex justify-between items-center">
+                              <span>{{ s.description }} <span class="stream-badge">LIVE</span></span>
+                              <a :href="s.stream_url" target="_blank" class="text-blue-500 hover:underline">全屏</a>
+                            </div>
+                            <img :src="s.stream_url" :alt="s.description" class="w-full" />
+                          </div>
+                        </template>
+                      </div>
                       <p class="text-[10px] text-slate-400 uppercase tracking-wide mb-1">返回结果</p>
                       <pre class="json-view bg-slate-800 text-slate-200 p-2 rounded-lg overflow-x-auto"
                         >{{ JSON.stringify(tool.result, null, 2) }}</pre>
@@ -373,46 +490,65 @@
         <div ref="anchor"></div>
       </div>
 
-      <!-- ═══════════════ 输入栏 ═══════════════ -->
-      <div class="flex-none border-t border-farm-100 bg-white/80 backdrop-blur px-4 py-3">
-        <form @submit.prevent="sendMessage" class="flex gap-2 items-end">
-          <div class="flex-1 relative">
-            <textarea ref="inputEl" v-model="inputText"
-              @keydown.enter.exact.prevent="sendMessage"
-              @keydown.enter.shift.exact="inputText += '\n'"
-              @input="autoResize"
-              :placeholder="reasoningEnabled
-                ? '深度思考模式 · 请输入问题… (Enter 发送)'
-                : '请输入您的问题… (Enter 发送，Shift+Enter 换行)'"
-              rows="1" :disabled="isStreaming"
-              class="w-full resize-none rounded-xl border
-                     focus:outline-none focus:ring-2 focus:border-transparent
-                     px-4 py-2.5 text-sm text-slate-800 bg-white
-                     placeholder-slate-400 disabled:bg-slate-50 disabled:cursor-not-allowed
-                     transition max-h-36 overflow-y-auto leading-relaxed"
+      <!-- ═══════════════ 输入栏（Claude 风格） ═══════════════ -->
+      <div class="flex-none bg-white/80 backdrop-blur px-4 py-3">
+        <form @submit.prevent="sendMessage"
+          class="relative rounded-2xl border bg-white shadow-sm transition-shadow focus-within:shadow-md"
+          :class="reasoningEnabled
+            ? 'border-violet-200 focus-within:border-violet-300'
+            : 'border-farm-200 focus-within:border-farm-300'">
+
+          <!-- 文本输入区 -->
+          <textarea ref="inputEl" v-model="inputText"
+            @compositionstart="isComposing = true"
+            @compositionend="isComposing = false"
+            @keydown.enter.exact="handleEnter"
+            @input="autoResize"
+            :placeholder="reasoningEnabled
+              ? '深度思考模式 · 请输入问题…'
+              : '请输入您的问题… (Enter 发送，Shift+Enter 换行)'"
+            rows="1" :disabled="isStreaming"
+            class="w-full resize-none bg-transparent
+                   focus:outline-none
+                   px-4 pt-3 pb-12 text-sm text-slate-800
+                   placeholder-slate-400 disabled:cursor-not-allowed
+                   max-h-40 overflow-y-auto leading-relaxed">
+          </textarea>
+
+          <!-- 底部工具栏（按钮在输入框内右下角） -->
+          <div class="absolute bottom-2 right-2 flex items-center gap-2">
+            <!-- 推理模式指示 -->
+            <span v-if="reasoningEnabled"
+              class="text-[10px] text-violet-400 select-none hidden sm:inline">
+              🧠 深度思考
+            </span>
+            <!-- 停止按钮（生成中） -->
+            <button v-if="isStreaming" @click="stopGeneration" type="button"
+              class="w-8 h-8 rounded-lg bg-red-500 hover:bg-red-600
+                     text-white flex items-center justify-center
+                     transition active:scale-95"
+              title="停止生成">
+              <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                <rect x="6" y="6" width="12" height="12" rx="2"/>
+              </svg>
+            </button>
+            <!-- 发送按钮（空闲） -->
+            <button v-else type="submit" :disabled="!inputText.trim()"
+              class="w-8 h-8 rounded-lg
+                     disabled:bg-slate-200 disabled:cursor-not-allowed
+                     text-white flex items-center justify-center
+                     transition active:scale-95"
               :class="reasoningEnabled
-                ? 'border-violet-200 focus:ring-violet-400'
-                : 'border-farm-200 focus:ring-farm-400'">
-            </textarea>
+                ? 'bg-violet-500 hover:bg-violet-600'
+                : 'bg-farm-600 hover:bg-farm-700'">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+              </svg>
+            </button>
           </div>
-          <button type="submit" :disabled="isStreaming || !inputText.trim()"
-            class="flex-none w-10 h-10 rounded-xl
-                   disabled:bg-slate-300 disabled:cursor-not-allowed
-                   text-white flex items-center justify-center shadow-sm
-                   transition active:scale-95"
-            :class="reasoningEnabled
-              ? 'bg-violet-500 hover:bg-violet-600'
-              : 'bg-farm-600 hover:bg-farm-700'">
-            <svg v-if="!isStreaming" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
-            </svg>
-            <svg v-else class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"/>
-            </svg>
-          </button>
         </form>
+
         <p class="text-[10px] text-slate-400 mt-1.5 text-center">
           农智 AI · 由 DeepSeek 驱动
           <span v-if="reasoningEnabled" class="text-violet-400">· 🧠 深度思考模式</span>
@@ -434,14 +570,6 @@ createApp({
   setup() {
     const API = '/api'
 
-    const zones   = ['东北', '西北', '东南', '西南']
-    const sensors = ['🌡️ 温度', '💧 湿度', '🌫️ CO₂', '☀️ 光照']
-    const quickPrompts = [
-      { icon: '📊', text: '查看东南区概况' },
-      { icon: '📈', text: '东北区过去6小时温度趋势' },
-      { icon: '💧', text: '给西北区浇水 30 升' },
-      { icon: '📋', text: '查看操作日志' },
-    ]
 
     const sessionId        = ref('')
     const isConnected      = ref(false)
@@ -449,14 +577,23 @@ createApp({
     const inputText        = ref('')
     const isStreaming       = ref(false)
     const hasStreamStarted = ref(false)
+    const isComposing       = ref(false)    // 中文输入法组合状态
 
     // ★ 推理模式状态
     const reasoningEnabled = ref(false)
     const reasoningEffort  = ref('medium')
 
+    // ★ 会话历史
+    const conversationList = ref([])
+    const editingConvId    = ref('')
+    const editingTitle     = ref('')
+
     const msgList = ref(null)
     const anchor  = ref(null)
     const inputEl = ref(null)
+
+    const renderTimers = new Map()   // msgIdx → timerId（节流 Markdown 渲染）
+    let abortController = null       // 用于中途停止请求
 
     const renderMd = (text) => {
       try { return marked.parse(text || '') } catch { return text || '' }
@@ -470,7 +607,14 @@ createApp({
       const el = inputEl.value
       if (!el) return
       el.style.height = 'auto'
-      el.style.height = Math.min(el.scrollHeight, 144) + 'px'
+      el.style.height = Math.min(el.scrollHeight, 160) + 'px'
+    }
+
+    // Enter 键处理：输入法组合中不提交
+    const handleEnter = (e) => {
+      if (isComposing.value) return   // IME 选字中，不拦截
+      e.preventDefault()
+      sendMessage()
     }
 
     // ─── 会话管理 ───
@@ -483,6 +627,7 @@ createApp({
 
         // 获取推理模式初始状态
         await fetchReasoningState()
+        await fetchConversations()
       } catch (e) {
         console.error('初始化会话失败', e)
         isConnected.value = false
@@ -491,9 +636,6 @@ createApp({
 
     const clearSession = async () => {
       if (isStreaming.value) return
-      if (sessionId.value) {
-        await fetch(`${API}/session/${sessionId.value}`, { method: 'DELETE' }).catch(() => {})
-      }
       messages.value = []
       await initSession()
     }
@@ -549,6 +691,131 @@ createApp({
       }
     }
 
+    // ─── 会话历史 ───
+    const fetchConversations = async () => {
+      try {
+        const res  = await fetch(`${API}/conversations`)
+        const data = await res.json()
+        conversationList.value = data.conversations || []
+      } catch (e) {
+        console.warn('获取会话列表失败', e)
+      }
+    }
+
+    const loadConversation = async (convId) => {
+      if (isStreaming.value || convId === sessionId.value) return
+      try {
+        const res = await fetch(`${API}/conversations/${convId}`)
+        if (!res.ok) { console.error('加载会话失败'); return }
+        const data = await res.json()
+        sessionId.value        = convId
+        reasoningEnabled.value = data.reasoning
+        reasoningEffort.value  = data.reasoning_effort
+
+        // 重建前端消息列表
+        const rebuilt = []
+        let toolGroup = null
+        let toolCallsMap = {}  // tool_call_id → { name, args }
+        for (const m of data.messages) {
+          if (m.role === 'user') {
+            toolGroup = null
+            toolCallsMap = {}
+            rebuilt.push({ role: 'user', content: m.content })
+          } else if (m.role === 'assistant') {
+            toolGroup = null
+            // 建立 tool_call_id → args 映射
+            toolCallsMap = {}
+            if (m.tool_calls) {
+              for (const tc of m.tool_calls) {
+                const fn = tc.function || {}
+                let args = {}
+                try { args = JSON.parse(fn.arguments || '{}') } catch {}
+                toolCallsMap[tc.id] = { name: fn.name || '', args }
+              }
+            }
+            rebuilt.push({
+              role: 'assistant',
+              content: m.content || '',
+              renderedHtml: renderMd(m.content || ''),
+              reasoning_content: m.reasoning_content || '',
+              reasoning_streaming: false,
+              reasoning_expanded: false,
+              streaming: false,
+            })
+          } else if (m.role === 'tool') {
+            if (!toolGroup) {
+              toolGroup = { role: 'tool_group', tools: [], running: false, expanded: false }
+              rebuilt.push(toolGroup)
+            }
+            const tcInfo = toolCallsMap[m.tool_call_id] || {}
+            toolGroup.tools.push({
+              id: m.tool_call_id,
+              name: tcInfo.name || '',
+              display_name: m.display_name || '工具',
+              args: tcInfo.args || {},
+              result: (() => { try { return JSON.parse(m.content) } catch { return m.content } })(),
+              done: true,
+            })
+          }
+        }
+        messages.value = rebuilt
+        scrollBottom()
+      } catch (e) {
+        console.error('加载会话失败', e)
+      }
+    }
+
+    const startRename = (conv) => {
+      editingConvId.value = conv.id
+      editingTitle.value  = conv.title
+      nextTick(() => {
+        // 尝试聚焦 rename 输入框
+        const el = document.querySelector('input[ref="renameInput"]')
+        if (el) el.focus()
+      })
+    }
+
+    const finishRename = async (convId) => {
+      const title = editingTitle.value.trim()
+      editingConvId.value = ''
+      if (!title) return
+      try {
+        await fetch(`${API}/conversations/${convId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title }),
+        })
+        await fetchConversations()
+      } catch (e) {
+        console.error('重命名失败', e)
+      }
+    }
+
+    const deleteConversation = async (convId) => {
+      if (!confirm('确定删除此对话？')) return
+      try {
+        await fetch(`${API}/session/${convId}`, { method: 'DELETE' })
+        if (convId === sessionId.value) {
+          messages.value = []
+          await initSession()
+        }
+        await fetchConversations()
+      } catch (e) {
+        console.error('删除失败', e)
+      }
+    }
+
+    const clearAllConversations = async () => {
+      if (!confirm('确定清空全部历史对话？此操作不可恢复。')) return
+      try {
+        await fetch(`${API}/conversations`, { method: 'DELETE' })
+        messages.value = []
+        await initSession()
+      } catch (e) {
+        console.error('清空失败', e)
+      }
+    }
+
     // ─── 发送消息 ───
     const sendMessage = async () => {
       const text = inputText.value.trim()
@@ -570,6 +837,7 @@ createApp({
           messages.value.push({
             role: 'assistant',
             content: '',
+            renderedHtml: '',
             reasoning_content: '',
             reasoning_streaming: false,
             reasoning_expanded: true,       // 推理过程默认展开
@@ -594,10 +862,12 @@ createApp({
       }
 
       try {
+        abortController = new AbortController()
         const resp = await fetch(`${API}/chat`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ session_id: sessionId.value, content: text }),
+          signal:  abortController.signal,
         })
 
         if (!resp.ok) {
@@ -649,15 +919,27 @@ createApp({
         }
 
       } catch (e) {
-        console.error(e)
-        messages.value.push({
-          role: 'assistant',
-          content: `❌ 网络错误：${e.message}`,
-          streaming: false,
-        })
+        if (e.name === 'AbortError') {
+          // 用户主动停止，不显示错误
+        } else {
+          console.error(e)
+          messages.value.push({
+            role: 'assistant',
+            content: `❌ 网络错误：${e.message}`,
+            streaming: false,
+          })
+        }
       } finally {
+        // 清理渲染节流计时器
+        renderTimers.forEach((timer) => clearTimeout(timer))
+        renderTimers.clear()
+        abortController = null
         messages.value.forEach(m => {
-          if (m.streaming)           m.streaming           = false
+          if (m.streaming) {
+            m.streaming = false
+            // 停止时对流式消息做一次最终渲染
+            if (m.content) m.renderedHtml = renderMd(m.content)
+          }
           if (m.reasoning_streaming) m.reasoning_streaming = false
           if (m.running)             m.running             = false
           // 推理完成后自动折叠
@@ -669,6 +951,7 @@ createApp({
         hasStreamStarted.value = false
         assistantMsgIdx        = -1
         toolGroupIdx           = -1
+        fetchConversations()   // 刷新列表（标题可能更新）
         nextTick(() => inputEl.value?.focus())
       }
 
@@ -705,13 +988,25 @@ createApp({
             if (msg.reasoning_content && msg.reasoning_expanded) {
               msg.reasoning_expanded = false
             }
+            // 节流渲染 Markdown，防止 v-html 频繁重建 DOM 导致图片闪烁
+            clearTimeout(renderTimers.get(idx))
+            renderTimers.set(idx, setTimeout(() => {
+              msg.renderedHtml = renderMd(msg.content)
+              renderTimers.delete(idx)
+            }, 80))
             scrollBottom()
             break
           }
 
           case 'text_done': {
-            if (assistantMsgIdx !== -1)
-              messages.value[assistantMsgIdx].streaming = false
+            if (assistantMsgIdx !== -1) {
+              const msg = messages.value[assistantMsgIdx]
+              msg.streaming = false
+              // 清除节流计时器，做一次最终完整渲染
+              clearTimeout(renderTimers.get(assistantMsgIdx))
+              renderTimers.delete(assistantMsgIdx)
+              msg.renderedHtml = renderMd(msg.content)
+            }
             assistantMsgIdx = -1
             break
           }
@@ -762,10 +1057,21 @@ createApp({
       }
     }
 
-    const sendQuick = (text) => {
-      if (isStreaming.value) return
-      inputText.value = text
-      sendMessage()
+
+    // ─── 停止生成 ───
+    const stopGeneration = async () => {
+      // 1) 前端中止 fetch 流
+      if (abortController) {
+        abortController.abort()
+      }
+      // 2) 通知后端停止 LLM 调用
+      if (sessionId.value) {
+        fetch(`${API}/chat/stop`, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ session_id: sessionId.value }),
+        }).catch(() => {})
+      }
     }
 
     onMounted(async () => {
@@ -774,13 +1080,15 @@ createApp({
     })
 
     return {
-      zones, sensors, quickPrompts,
       messages, inputText, isStreaming, hasStreamStarted,
       isConnected, sessionId,
       reasoningEnabled, reasoningEffort,
+      conversationList, editingConvId, editingTitle,
       msgList, anchor, inputEl,
-      renderMd, sendMessage, sendQuick, clearSession, autoResize,
+      renderMd, sendMessage, clearSession, autoResize,
       toggleReasoning, updateReasoningEffort,
+      loadConversation, startRename, finishRename, deleteConversation, clearAllConversations,
+      handleEnter, stopGeneration, isComposing,
     }
   }
 }).mount('#app')

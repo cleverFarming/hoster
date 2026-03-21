@@ -1,10 +1,10 @@
-"""工具：读取操作日志"""
+"""工具：读取操作日志（通过 ROS2 服务）"""
 
-import sqlite3
 from typing import Optional
 
 from ._registry  import ToolRegistry
-from ._constants import DB_PATH
+from ._constants import ROS_SERVICES, ROSBRIDGE_TIMEOUT
+from ._ws_client import rosbridge
 
 
 @ToolRegistry.register(
@@ -17,23 +17,24 @@ from ._constants import DB_PATH
     },
 )
 def read_logs(limit: int = 10, operation_type: Optional[str] = None) -> dict:
-    with sqlite3.connect(DB_PATH) as c:
-        if operation_type:
-            rows = c.execute(
-                "SELECT ts,op,detail,who FROM logs "
-                "WHERE op=? ORDER BY id DESC LIMIT ?",
-                (operation_type, limit),
-            ).fetchall()
-        else:
-            rows = c.execute(
-                "SELECT ts,op,detail,who FROM logs ORDER BY id DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-
-    return {
-        "count": len(rows),
+    """
+    调用 ROS2 服务: /farm/read_logs
+    请求 args:  {"limit": 10, "operation_type": "浇水"}  (operation_type 可选)
+    期望返回 values: {
+        "count": 3,
         "logs": [
-            {"time": r[0], "type": r[1], "detail": r[2], "operator": r[3]}
-            for r in rows
-        ],
+            {"time": "...", "type": "浇水", "detail": "...", "operator": "AI"},
+            ...
+        ]
     }
+    """
+    args = {"limit": limit}
+    if operation_type:
+        args["operation_type"] = operation_type
+
+    resp = rosbridge.call_service(
+        ROS_SERVICES["read_logs"],
+        args=args,
+        timeout=ROSBRIDGE_TIMEOUT,
+    )
+    return resp
