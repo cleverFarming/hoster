@@ -1,5 +1,7 @@
 .env
+all-MiniLM-L6-v2
 *.db
+chroma_db
 
 # JetBrains IDE-specific files
 .idea/

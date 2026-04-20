@@ -1,4 +1,16 @@
 """AI智慧农业 —— Flask 后端（SSE 流式 + 工具调用 + DeepSeek 推理模式）"""
+from venv import logger
+
+import chromadb
+from chromadb.utils import embedding_functions
+from datetime import datetime
+import hashlib
+import logging
+
+# logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
+# logger.addHandler(logging.StreamHandler())
+
 
 import os, json, threading, uuid, sqlite3
 from flask import Flask, request, Response, jsonify, stream_with_context, send_from_directory
@@ -23,7 +35,7 @@ init_db()
 # 环境变量 ROSBRIDGE_URL 可覆盖默认地址 ws://localhost:9090
 connect_rosbridge()
 
-API_KEY  = os.environ.get("DEEPSEEK_API_KEY", "")
+API_KEY  = os.environ.get("DEEPSEEK_API_KEY", "")#xxKey
 BASE_URL = os.environ.get("API_BASE", "https://api.deepseek.com")
 MODEL    = os.environ.get("MODEL", "deepseek-chat")
 
@@ -88,7 +100,7 @@ def sse_event(event: str, data: dict) -> str:
 # ═══════════════════ 会话持久化 ═══════════════════
 
 def _db_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH) #farm.db农场数据库
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -339,7 +351,14 @@ def list_conversations():
         rows = conn.execute(
             """SELECT id, title, created_at, updated_at
                FROM conversations ORDER BY updated_at DESC"""
-        ).fetchall()
+        ).fetchall() #"execute() - 执行SQL查询"，"FROM conversations - 从conversations表查询",".fetchall() - 获取所有结果行"
+    # # 打印调试信息
+    # print("=" * 50)
+    # print(f"[DEBUG] 查询到 {len(rows)} 条会话记录")
+    # for r in rows:
+    #     print(f"  - ID: {r['id']}, Title: {r['title']}, Updated: {r['updated_at']}")
+    # print("=" * 50)
+
     return jsonify({
         "conversations": [dict(r) for r in rows],
     })
@@ -422,11 +441,325 @@ def stop_chat():
         abort_flags[sid] = True
     return jsonify({"ok": True})
 
+# ── 新增ChromaDB 相关代码 ──
+# 初始化 ChromaDB 客户端
+
+
+#chroma_client = chromadb.PersistentClient(path="./chroma_db")
+#embedding_fn = embedding_functions.DefaultEmbeddingFunction()
+# 方式1：指定本地模型路径（推荐）
+embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+    model_name="./all-MiniLM-L6-v2",  # 替换为你的实际路径
+    device="cpu"  # 或 "cuda" 如果有 GPU
+)
+# 初始化 ChromaDB 客户端
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+
+# 创建 collection 时指定 embedding 函数
+collection = chroma_client.get_or_create_collection(
+    name="memory_conversations",
+    embedding_function=embedding_fn
+)
+
+# 为每个会话创建或获取 collection
+def get_memory_collection(sid: str):
+    """获取会话的记忆库"""
+    collection_name = f"memory_{sid}"
+    return chroma_client.get_or_create_collection(
+        name=collection_name,
+        embedding_function=embedding_fn
+    )
+
+def retrieve_similar_memories(sid: str, query: str, top_k: int = 3):
+    """检索相似的对话记忆"""
+    try:
+        collection = get_memory_collection(sid)
+        results = collection.query(
+            query_texts=[query],
+            n_results=top_k
+        )
+
+        memories = []
+        if results['documents']:
+            for doc, metadata, distance in zip(
+                    results['documents'][0],
+                    results['metadatas'][0],
+                    results['distances'][0]
+            ):
+                memories.append({
+                    'content': doc,
+                    'metadata': metadata,
+                    'similarity': 1 - distance  # 距离转相似度
+                })
+        return memories
+    except Exception as e:
+        logger.error(f"记忆检索失败: {e}")
+        return []
+
+def format_memories_for_context(memories: list) -> str:
+    """将检索到的记忆格式化为上下文"""
+    if not memories:
+        return ""
+
+    context = "\n## 相关历史记忆\n"
+    for i, mem in enumerate(memories, 1):
+        if mem['similarity'] > 0.7:  # 高相似度才注入
+            context += f"- {mem['content']}\n"
+    return context
+
+def inject_memory_to_session(session, memory_context: str):
+    """将记忆注入到会话上下文中"""
+    if not memory_context:
+        return
+
+    # 方法1：修改最后一条系统消息
+    for i, msg in enumerate(session["msgs"]):
+        if msg["role"] == "system":
+            if "[记忆上下文]" not in msg["content"]:
+                session["msgs"][i]["content"] += f"\n\n{memory_context}"
+            return
+
+    # 方法2：如果没有系统消息，插入一条
+    session["msgs"].insert(0, {
+        "role": "system",
+        "content": f"你是AI助手。以下是相关的历史对话记忆：\n{memory_context}"
+    })
+
+def save_conversation_to_memory(sid: str, user_query: str, assistant_response: str,
+                                reasoning: str = None, tool_calls: list = None,
+                                metadata: dict = None):
+    """将对话保存到 ChromaDB 作为长期记忆"""
+    try:
+        collection = get_memory_collection(sid)
+
+        # 构建要保存的文本（问题和回答的组合）
+        memory_text = f"用户问：{user_query}\n助手答：{assistant_response}"
+
+        # 如果有推理过程，也加入
+        if reasoning:
+            memory_text += f"\n推理过程：{reasoning}"
+
+        # 准备元数据
+        doc_metadata = {
+            "timestamp": datetime.now().isoformat(),
+            "user_query": user_query[:200],  # 截断防止过长
+            "assistant_response": assistant_response[:200],
+            "has_reasoning": bool(reasoning),
+            "has_tool_calls": bool(tool_calls),
+            **(metadata or {})
+        }
+
+        # 生成唯一ID（使用时间戳+哈希）
+        doc_id = f"{int(datetime.now().timestamp())}_{hashlib.md5(user_query.encode()).hexdigest()[:8]}"
+
+        # 插入到 ChromaDB
+        collection.add(
+            documents=[memory_text],
+            metadatas=[doc_metadata],
+            ids=[doc_id]
+        )
+
+        logger.info(f"已保存对话记忆: {doc_id}")
+
+    except Exception as e:
+        logger.error(f"保存到 ChromaDB 失败: {e}")
+
+# 可选：定期清理旧记忆或限制记忆数量
+def cleanup_old_memories(sid: str, keep_count: int = 100):
+    """清理旧的记忆，只保留最近的 keep_count 条"""
+    try:
+        collection = get_memory_collection(sid)
+        # ChromaDB 需要按 ID 删除，需要先获取所有 ID
+        all_ids = collection.get()['ids']
+        if len(all_ids) > keep_count:
+            ids_to_delete = all_ids[:-keep_count]
+            collection.delete(ids=ids_to_delete)
+            logger.info(f"清理了 {len(ids_to_delete)} 条旧记忆")
+    except Exception as e:
+        logger.error(f"清理记忆失败: {e}")
+
+def inject_memories_to_context(session: dict, memories: list):
+    """
+    将检索到的相似记忆注入到对话上下文中
+
+    参数:
+        session: 当前会话对象
+        memories: 检索到的记忆列表，格式为 [{'content': str, 'similarity': float, 'metadata': dict}]
+    """
+    if not memories:
+        return
+
+    # 1. 格式化记忆为可读文本
+    memory_context = format_memories_for_context(memories)
+
+    if not memory_context:
+        return
+
+    # 2. 注入到系统消息中
+    injected = False
+
+    for i, msg in enumerate(session["msgs"]):
+        if msg["role"] == "system":
+            # 检查是否已经注入过相似记忆（避免重复）
+            if "[相关记忆]" in msg["content"]:
+                # 更新已有的记忆部分
+                lines = msg["content"].split("\n")
+                new_lines = []
+                skip_memory_section = False
+
+                for line in lines:
+                    if line.startswith("## 相关历史记忆"):
+                        skip_memory_section = True
+                        new_lines.append(memory_context)
+                    elif skip_memory_section and line.startswith("##"):
+                        skip_memory_section = False
+                        new_lines.append(line)
+                    elif not skip_memory_section:
+                        new_lines.append(line)
+
+                session["msgs"][i]["content"] = "\n".join(new_lines)
+            else:
+                # 追加到现有系统消息
+                session["msgs"][i]["content"] += f"\n\n{memory_context}"
+
+            injected = True
+            break
+
+    # 3. 如果没有系统消息，创建一条
+    if not injected:
+        system_msg = {
+            "role": "system",
+            "content": f"""你是AI助手，请基于以下相关历史记忆来回答用户问题。
+
+{memory_context}
+
+注意：这些是用户的历史对话记录，可以作为参考来提供更连贯和个性化的回答。"""
+        }
+        session["msgs"].insert(0, system_msg)
+
+    logger.debug(f"已注入 {len(memories)} 条相关记忆到上下文")
+
+def format_memories_for_context(memories: list, max_memories: int = 3) -> str:
+    """
+    将记忆列表格式化为适合注入上下文的文本
+
+    参数:
+        memories: 记忆列表
+        max_memories: 最大注入数量
+    """
+    if not memories:
+        return ""
+
+    # 过滤低相似度的记忆（可选）
+    relevant_memories = [
+        m for m in memories
+        if m.get('similarity', 0) > 0.6  # 只使用相似度高于0.6的记忆
+    ]
+
+    if not relevant_memories:
+        relevant_memories = memories[:max_memories]
+    else:
+        relevant_memories = relevant_memories[:max_memories]
+
+    context_parts = ["## 相关历史记忆\n"]
+    context_parts.append("以下是用户之前的对话记录，可能对回答当前问题有帮助：\n")
+
+    for i, mem in enumerate(relevant_memories, 1):
+        content = mem.get('content', '')
+        similarity = mem.get('similarity', 0)
+
+        # 解析记忆内容（假设格式为 "用户问：xxx\n助手答：xxx"）
+        parts = content.split('\n助手答：')
+        if len(parts) == 2:
+            user_question = parts[0].replace('用户问：', '')
+            assistant_answer = parts[1][:150]  # 截断过长内容
+
+            context_parts.append(f"{i}. 用户曾问：{user_question}")
+            context_parts.append(f"   你曾回答：{assistant_answer}{'...' if len(parts[1]) > 150 else ''}")
+            context_parts.append(f"   (相关度: {similarity:.2%})\n")
+        else:
+            # 如果格式不标准，直接使用原内容
+            context_parts.append(f"{i}. {content[:200]}...\n")
+
+    return "\n".join(context_parts)
+
+def inject_memories_to_context_advanced(session: dict, memories: list, strategy: str = "system"):
+    """
+    高级版本：支持多种注入策略
+
+    策略:
+        - "system": 注入到系统消息（默认）
+        - "user_prefix": 在用户消息前添加
+        - "assistant_prefix": 在助手消息前添加
+        - "separate": 作为单独的消息插入
+    """
+    if not memories:
+        return
+
+    memory_context = format_memories_for_context(memories)
+
+    if strategy == "system":
+        # 策略1：注入到系统消息
+        inject_to_system_message(session, memory_context)
+
+    elif strategy == "user_prefix":
+        # 策略2：在最后一条用户消息前添加
+        for i in range(len(session["msgs"]) - 1, -1, -1):
+            if session["msgs"][i]["role"] == "user":
+                original_content = session["msgs"][i]["content"]
+                session["msgs"][i]["content"] = f"{memory_context}\n\n{original_content}"
+                break
+
+    elif strategy == "assistant_prefix":
+        # 策略3：在助手回复前添加（作为提示）
+        session["msgs"].append({
+            "role": "assistant",
+            "content": f"根据历史记忆：{memory_context}"
+        })
+
+    elif strategy == "separate":
+        # 策略4：作为单独的消息插入
+        session["msgs"].insert(-1, {
+            "role": "system",
+            "content": f"以下是从长期记忆中检索到的相关信息：\n{memory_context}"
+        })
+
+def inject_to_system_message(session: dict, memory_context: str):
+    """辅助函数：注入到系统消息"""
+    for i, msg in enumerate(session["msgs"]):
+        if msg["role"] == "system":
+            if "[相关记忆]" in msg["content"]:
+                # 更新已有记忆
+                lines = msg["content"].split("\n")
+                new_lines = []
+                in_memory_section = False
+
+                for line in lines:
+                    if line.startswith("## 相关历史记忆"):
+                        in_memory_section = True
+                        new_lines.append(memory_context)
+                    elif in_memory_section and (line.startswith("##") or not line.strip()):
+                        in_memory_section = False
+                        new_lines.append(line)
+                    elif not in_memory_section:
+                        new_lines.append(line)
+
+                session["msgs"][i]["content"] = "\n".join(new_lines)
+            else:
+                session["msgs"][i]["content"] += f"\n\n{memory_context}"
+            return
+
+    # 没有系统消息，创建一条
+    session["msgs"].insert(0, {
+        "role": "system",
+        "content": f"你是AI助手。\n\n{memory_context}"
+    })
+
 
 # ── 主聊天端点 ──
 
 @app.post("/api/chat")
-def chat():
+def chat(): #使用 SSE（Server-Sent Events，服务器推送事件）实现流式对话的 API
     """
     SSE 事件类型：
       reasoning_delta  { content }              ← 推理过程流式片段（仅推理模式）
@@ -439,19 +772,24 @@ def chat():
       done             { reasoning_enabled }
       error            { message }
     """
+    # 检查 API Key
     if not API_KEY:
         return jsonify({"error": "未配置 DEEPSEEK_API_KEY"}), 500
 
+    # 获取请求参数
     body    = request.get_json(force=True)
     sid     = body.get("session_id", "")
     content = body.get("content", "").strip()
 
+    # 验证必填参数
     if not sid or not content:
         return jsonify({"error": "缺少 session_id 或 content"}), 400
 
+    # 获取会话配置
     session = get_session(sid)
     reasoning_on = session.get("reasoning", False)
 
+    # 保存用户消息到内存
     session["msgs"].append({"role": "user", "content": content})
 
     # 首次发消息时才持久化会话（避免空会话写入数据库）
@@ -462,10 +800,18 @@ def chat():
 
     def generate():
         abort_flags.pop(sid, None)          # 重置停止标志
+        # 🆕 预加载记忆（可选）
+        #preload_memories_to_session(session, sid)
 
         for _round in range(10):
             if abort_flags.get(sid):
                 break
+
+            # 🆕 1. 检索相似记忆
+            similar_memories = retrieve_similar_memories(sid, content)
+            if similar_memories:
+                inject_memories_to_context(session, similar_memories)
+
 
             # ── 构建 LLM 请求参数 ──
             llm_kwargs = _build_llm_kwargs(session)
@@ -565,6 +911,15 @@ def chat():
             if not tool_calls_list:
                 yield sse_event("round_done", {})
                 break
+
+            # 🆕 5. 保存到 ChromaDB（长期记忆）
+            save_conversation_to_memory(
+                sid=sid,
+                user_query=content,
+                assistant_response=full_content,
+                reasoning=full_reasoning,
+                tool_calls=tool_calls_list
+            )
 
             # ── 执行工具 ──
             for tc in tool_calls_list:
